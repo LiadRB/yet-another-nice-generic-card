@@ -1443,10 +1443,6 @@ class YangcCard extends HTMLElement {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    static getConfigElement() {
-        return document.createElement('yangc-editor');
-    }
-
     static getStubConfig() {
         return {
             title: 'פינת אוכל',
