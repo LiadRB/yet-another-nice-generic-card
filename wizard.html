@@ -1429,7 +1429,7 @@
                 document.getElementById('cardIcon').value = parsed.icon || 'mdi:home';
                 updateIconPreview(document.querySelector('#cardIcon').parentNode.querySelector('.icon-preview'), parsed.icon || 'mdi:home');
                 if (parsed.accent_color) {
-                    updateAccentColor(parsed.accent_color.replace(/'/g, ''));
+                    updateAccentColor(parsed.accent_color.replace(/['"]/g, ''));
                 }
                 document.getElementById('collapsedDefault').checked = parsed.collapsed_default !== 'false';
                 if (parsed.lights_title) document.getElementById('lightsTitle').value = parsed.lights_title;
@@ -1520,14 +1520,28 @@
 
                 if (!currentList) return;
 
-                if (trimmed.startsWith('- entity:')) {
-                    currentEntity = { entity: trimmed.replace('- entity:', '').trim() };
+                // New list item (starts with "- ")
+                if (trimmed.startsWith('- ')) {
+                    currentEntity = {};
                     currentList.push(currentEntity);
-                } else if (currentEntity && indent >= 4) {
-                    const [key, ...vals] = trimmed.split(':');
+                    // Parse the key:value after "- "
+                    const content = trimmed.slice(2);
+                    const [key, ...vals] = content.split(':');
                     const value = vals.join(':').trim();
                     if (key && vals.length) {
                         currentEntity[key.trim()] = value === 'true' ? true : value === 'false' ? false : value;
+                    }
+                } else if (currentEntity && indent >= 4) {
+                    // Skip multiline values (lines starting with {% or containing Jinja)
+                    if (trimmed.startsWith('{%') || trimmed.startsWith('%}') || trimmed.startsWith('{#')) return;
+                    const [key, ...vals] = trimmed.split(':');
+                    const value = vals.join(':').trim();
+                    if (key && vals.length) {
+                        // Skip unknown complex keys (tap_action, etc.)
+                        const k = key.trim();
+                        if (['entity', 'name', 'icon', 'reversed', 'exclude_from_actions'].includes(k)) {
+                            currentEntity[k] = value === 'true' ? true : value === 'false' ? false : value;
+                        }
                     }
                 }
             });
