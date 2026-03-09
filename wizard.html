@@ -1,0 +1,1765 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YANGC - Configuration Wizard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.2.96/css/materialdesignicons.min.css" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0d0b14;
+            --bg-secondary: rgba(20, 15, 35, 0.95);
+            --bg-tertiary: rgba(30, 25, 50, 0.9);
+            --accent: #a855f7;
+            --accent-glow: rgba(168, 85, 247, 0.4);
+            --accent-gradient: linear-gradient(135deg, #7c3aed 0%, #a855f7 50%, #c084fc 100%);
+            --text-primary: #ffffff;
+            --text-secondary: rgba(255, 255, 255, 0.7);
+            --text-muted: rgba(255, 255, 255, 0.4);
+            --border: rgba(168, 85, 247, 0.2);
+            --success: #4ade80;
+            --warning: #fbbf24;
+            --danger: #ef4444;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        .app-container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 420px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            padding: 20px;
+            overflow-y: auto;
+            max-height: 100vh;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header {
+            margin-bottom: 20px;
+        }
+
+        .sidebar-header h1 {
+            font-size: 1.4rem;
+            background: var(--accent-gradient);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .sidebar-header p {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        /* Tabs */
+        .main-tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .main-tab {
+            flex: 1;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-align: center;
+        }
+
+        .main-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .main-tab:hover:not(.active) {
+            background: rgba(168, 85, 247, 0.1);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Form Sections */
+        .form-section {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 16px;
+            margin-bottom: 14px;
+        }
+
+        .form-section-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 14px;
+        }
+
+        .form-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 5px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            font-family: inherit;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 2px var(--accent-glow);
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        select.form-input {
+            cursor: pointer;
+        }
+
+        textarea.form-input {
+            min-height: 120px;
+            resize: vertical;
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+        }
+
+        /* Icon Picker */
+        .icon-picker-wrapper {
+            position: relative;
+        }
+
+        .icon-picker-input {
+            display: flex;
+            gap: 8px;
+        }
+
+        .icon-picker-input input {
+            flex: 1;
+        }
+
+        .icon-preview {
+            width: 38px;
+            height: 38px;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            color: var(--accent);
+            cursor: pointer;
+        }
+
+        .icon-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+            padding: 8px;
+        }
+
+        .icon-dropdown.show {
+            display: block;
+        }
+
+        .icon-search {
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        .icon-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 4px;
+        }
+
+        .icon-option {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 18px;
+            color: var(--text-secondary);
+            transition: all 0.15s ease;
+        }
+
+        .icon-option:hover {
+            background: var(--accent);
+            color: white;
+        }
+
+        /* Entity Picker */
+        .entity-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+
+        .entity-dropdown.show {
+            display: block;
+        }
+
+        .entity-option {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            font-size: 0.8rem;
+        }
+
+        .entity-option:hover {
+            background: rgba(168, 85, 247, 0.2);
+        }
+
+        .entity-option .entity-name {
+            color: var(--text-primary);
+        }
+
+        .entity-option .entity-id {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+        }
+
+        /* Dynamic List */
+        .dynamic-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .dynamic-item {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+
+        .dynamic-item-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .dynamic-item-title {
+            font-weight: 500;
+            font-size: 0.85rem;
+        }
+
+        .btn-remove {
+            width: 24px;
+            height: 24px;
+            border-radius: 6px;
+            border: none;
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--danger);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-remove:hover {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-add {
+            width: 100%;
+            padding: 10px;
+            background: rgba(168, 85, 247, 0.1);
+            border: 1px dashed var(--accent);
+            border-radius: 10px;
+            color: var(--accent);
+            font-size: 0.8rem;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .btn-add:hover {
+            background: rgba(168, 85, 247, 0.2);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 10px 16px;
+            border-radius: 8px;
+            border: none;
+            font-size: 0.85rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        /* Connection Status */
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            margin-top: 12px;
+        }
+
+        .connection-status.connected {
+            background: rgba(74, 222, 128, 0.1);
+            color: var(--success);
+        }
+
+        .connection-status.disconnected {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--danger);
+        }
+
+        .connection-status.connecting {
+            background: rgba(251, 191, 36, 0.1);
+            color: var(--warning);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .connected .status-dot {
+            background: var(--success);
+        }
+
+        .disconnected .status-dot {
+            background: var(--danger);
+        }
+
+        .connecting .status-dot {
+            background: var(--warning);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Preview Area */
+        .preview-area {
+            flex: 1;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background: linear-gradient(135deg, #0d0b14 0%, #1a1528 100%);
+            overflow: auto;
+        }
+
+        .preview-header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .preview-header h2 {
+            font-size: 1.1rem;
+            color: var(--text-secondary);
+        }
+
+        .preview-container {
+            width: 100%;
+            max-width: 400px;
+        }
+
+        /* Card Preview - matching actual card styles */
+        .card-preview {
+            background: rgba(20, 15, 35, 0.92);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            overflow: hidden;
+        }
+
+        .card-preview .card-header {
+            background: var(--accent-gradient);
+            padding: 18px 22px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .card-preview .header-icon {
+            font-size: 26px;
+            color: white;
+        }
+
+        .card-preview .header-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: white;
+        }
+
+        .card-preview .content {
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .card-preview .section {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .card-preview .section-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .card-preview .section-icon {
+            font-size: 16px;
+            color: var(--accent);
+        }
+
+        .card-preview .toggle-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+            gap: 10px;
+        }
+
+        .card-preview .toggle-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid transparent;
+            border-radius: 14px;
+            padding: 14px 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .card-preview .toggle-btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .card-preview .toggle-btn.active {
+            background: rgba(168, 85, 247, 0.2);
+            border-color: var(--accent);
+            box-shadow: 0 0 15px var(--accent-glow);
+        }
+
+        .card-preview .toggle-btn .toggle-icon {
+            font-size: 28px;
+            color: var(--text-secondary);
+        }
+
+        .card-preview .toggle-btn.active .toggle-icon {
+            color: var(--warning);
+        }
+
+        .card-preview .toggle-name {
+            font-size: 0.8rem;
+            color: white;
+            text-align: center;
+        }
+
+        .card-preview .cover-item {
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 14px;
+            padding: 14px;
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .card-preview .cover-icon-wrapper {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #7c3aed, #a855f7);
+        }
+
+        .card-preview .cover-icon-wrapper i {
+            font-size: 24px;
+            color: white;
+        }
+
+        .card-preview .cover-info {
+            flex: 1;
+        }
+
+        .card-preview .cover-name {
+            font-size: 0.9rem;
+            color: white;
+            font-weight: 500;
+        }
+
+        .card-preview .cover-state {
+            font-size: 0.75rem;
+            color: #8b5cf6;
+            margin-top: 4px;
+        }
+
+        .card-preview .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .card-preview .cover-slider {
+            flex: 1;
+            height: 6px;
+            border-radius: 3px;
+            background: rgba(255, 255, 255, 0.1);
+            -webkit-appearance: none;
+        }
+
+        .card-preview .cover-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            cursor: pointer;
+        }
+
+        .card-preview .slider-value {
+            font-size: 0.8rem;
+            color: #c084fc;
+            min-width: 36px;
+            text-align: center;
+        }
+
+        .card-preview .slider-set-btn {
+            padding: 5px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--accent);
+            background: rgba(168, 85, 247, 0.2);
+            color: white;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        .card-preview .automations-section {
+            border-top: 1px solid rgba(168, 85, 247, 0.2);
+            padding-top: 18px;
+            margin-top: 4px;
+        }
+
+        .card-preview .automations-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .card-preview .auto-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(168, 85, 247, 0.2);
+            border-radius: 12px;
+            padding: 12px 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            color: white;
+        }
+
+        .card-preview .auto-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .card-preview .auto-btn i {
+            font-size: 22px;
+        }
+
+        .card-preview .auto-btn span {
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        /* Output Section */
+        .output-section {
+            margin-top: 24px;
+            width: 100%;
+            max-width: 550px;
+        }
+
+        .output-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .output-header h3 {
+            font-size: 0.95rem;
+            color: var(--text-secondary);
+        }
+
+        .output-code {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 14px;
+            max-height: 300px;
+            overflow: auto;
+        }
+
+        .output-code pre {
+            margin: 0;
+            font-family: 'Consolas', monospace;
+            font-size: 0.75rem;
+            color: #e0e0e0;
+            white-space: pre-wrap;
+        }
+
+        /* Notification */
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: var(--success);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 10px;
+            font-weight: 500;
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+        }
+
+        .notification.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .app-container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                max-height: none;
+                border-right: none;
+                border-bottom: 1px solid var(--border);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>Yet Another Nice Generic Card</h1>
+                <p>Configuration Wizard with Live Preview</p>
+            </div>
+
+            <div class="main-tabs">
+                <button class="main-tab active" data-tab="config">Configuration</button>
+                <button class="main-tab" data-tab="connection">HA Connection</button>
+                <button class="main-tab" data-tab="import">Import/Export</button>
+            </div>
+
+            <!-- Configuration Tab -->
+            <div class="tab-content active" id="tab-config">
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-cog"></i> General Settings</div>
+                    <div class="form-group">
+                        <label class="form-label">Card Title</label>
+                        <input type="text" class="form-input" id="cardTitle" value="Living Room"
+                            placeholder="Room name">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Card Icon</label>
+                        <div class="icon-picker-wrapper">
+                            <div class="icon-picker-input">
+                                <input type="text" class="form-input" id="cardIcon" value="mdi:sofa"
+                                    placeholder="mdi:home">
+                                <div class="icon-preview" onclick="toggleIconPicker(this)"><i class="mdi mdi-sofa"></i>
+                                </div>
+                            </div>
+                            <div class="icon-dropdown" id="cardIconDropdown"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Accent Color</label>
+                        <div style="display: flex; align-items: center; gap: 12px;">
+                            <input type="color" id="accentColor" value="#667eea"
+                                style="width: 44px; height: 38px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-tertiary); cursor: pointer; padding: 2px;"
+                                oninput="updateAccentColor(this.value)">
+                            <div id="colorSwatches" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                <button onclick="setAccentColor('#667eea')" title="Default Blue-Purple" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #667eea, #4a3d8f); cursor: pointer;" class="color-swatch active"></button>
+                                <button onclick="setAccentColor('#ef4444')" title="Red" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #ef4444, #b91c1c); cursor: pointer;" class="color-swatch"></button>
+                                <button onclick="setAccentColor('#f59e0b')" title="Amber" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #f59e0b, #b45309); cursor: pointer;" class="color-swatch"></button>
+                                <button onclick="setAccentColor('#10b981')" title="Emerald" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #10b981, #047857); cursor: pointer;" class="color-swatch"></button>
+                                <button onclick="setAccentColor('#3b82f6')" title="Blue" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #3b82f6, #1d4ed8); cursor: pointer;" class="color-swatch"></button>
+                                <button onclick="setAccentColor('#ec4899')" title="Pink" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #ec4899, #be185d); cursor: pointer;" class="color-swatch"></button>
+                                <button onclick="setAccentColor('#8b5cf6')" title="Violet" style="width: 28px; height: 28px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); background: linear-gradient(135deg, #8b5cf6, #6d28d9); cursor: pointer;" class="color-swatch"></button>
+                            </div>
+                        </div>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Choose a color to distinguish this card from others</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="collapsedDefault" checked style="accent-color: var(--accent);">
+                            Start Collapsed by Default
+                        </label>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">Only the title bar will be visible initially</span>
+                    </div>
+                    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px;">
+                        <label class="form-label" style="font-weight: 600; color: var(--accent); margin-bottom: 10px;">Section Title Overrides</label>
+                        <div style="display: flex; flex-direction: column; gap: 8px;">
+                            <div>
+                                <label class="form-label">Lights Section Title</label>
+                                <input type="text" class="form-input" id="lightsTitle" value="תאורה ומזגן" placeholder="תאורה ומזגן">
+                            </div>
+                            <div>
+                                <label class="form-label">Curtains Section Title</label>
+                                <input type="text" class="form-input" id="curtainsTitle" value="וילונות" placeholder="וילונות">
+                            </div>
+                            <div>
+                                <label class="form-label">Media Section Title</label>
+                                <input type="text" class="form-input" id="mediaTitle" value="מדיה" placeholder="מדיה">
+                            </div>
+                            <div>
+                                <label class="form-label">Quick Actions Section Title</label>
+                                <input type="text" class="form-input" id="actionsTitle" value="פעולות מהירות" placeholder="פעולות מהירות">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-view-list"></i> Sections</div>
+                    <div id="sectionsContainer" class="dynamic-list"></div>
+                    <button class="btn-add" onclick="addSection()"><i class="mdi mdi-plus"></i> Add Section</button>
+                </div>
+
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-lightning-bolt"></i> Quick Actions</div>
+                    <div class="form-group">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="enableAutomations" checked style="accent-color: var(--accent);">
+                            Enable Quick Actions Section
+                        </label>
+                    </div>
+                    <div id="automationsSettings">
+                        <div class="form-group">
+                            <label class="form-label">Section Title</label>
+                            <input type="text" class="form-input" id="autoTitle" value="Quick Actions">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Section Icon</label>
+                            <div class="icon-picker-wrapper">
+                                <div class="icon-picker-input">
+                                    <input type="text" class="form-input" id="autoIcon" value="mdi:lightning-bolt">
+                                    <div class="icon-preview" onclick="toggleIconPicker(this)"><i
+                                            class="mdi mdi-lightning-bolt"></i></div>
+                                </div>
+                                <div class="icon-dropdown" id="autoIconDropdown"></div>
+                            </div>
+                        </div>
+                        <div id="sectionAutomations" class="dynamic-list" style="margin-top: 12px;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection Tab -->
+            <div class="tab-content" id="tab-connection">
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-home-assistant"></i> Home Assistant Connection
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Home Assistant URL</label>
+                        <input type="text" class="form-input" id="haUrl" placeholder="http://homeassistant.local:8123">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Long-Lived Access Token</label>
+                        <input type="password" class="form-input" id="haToken" placeholder="Your access token">
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" onclick="connectToHA()"><i class="mdi mdi-connection"></i>
+                            Connect</button>
+                        <button class="btn btn-secondary" onclick="disconnectHA()"><i class="mdi mdi-close"></i>
+                            Disconnect</button>
+                    </div>
+                    <div class="connection-status disconnected" id="connectionStatus">
+                        <span class="status-dot"></span>
+                        <span id="statusText">Not connected</span>
+                    </div>
+                </div>
+                <div class="form-section" id="entitiesSection" style="display: none;">
+                    <div class="form-section-title"><i class="mdi mdi-format-list-bulleted"></i> Available Entities
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Filter by domain</label>
+                        <select class="form-input" id="entityDomainFilter" onchange="filterEntities()">
+                            <option value="">All domains</option>
+                            <option value="switch">switch</option>
+                            <option value="light">light</option>
+                            <option value="cover">cover</option>
+                            <option value="fan">fan</option>
+                            <option value="climate">climate</option>
+                        </select>
+                    </div>
+                    <div id="entityList" style="max-height: 300px; overflow-y: auto;"></div>
+                </div>
+            </div>
+
+            <!-- Import/Export Tab -->
+            <div class="tab-content" id="tab-import">
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-import"></i> Import YAML</div>
+                    <div class="form-group">
+                        <label class="form-label">Paste your existing YAML configuration</label>
+                        <textarea class="form-input" id="importYaml"
+                            placeholder="type: custom:yangc&#10;title: My Room&#10;..."></textarea>
+                    </div>
+                    <button class="btn btn-primary" onclick="importConfig()"><i class="mdi mdi-upload"></i> Import
+                        Configuration</button>
+                </div>
+                <div class="form-section">
+                    <div class="form-section-title"><i class="mdi mdi-content-save"></i> Save/Load</div>
+                    <div class="btn-group">
+                        <button class="btn btn-secondary" onclick="saveToLocalStorage()"><i
+                                class="mdi mdi-content-save"></i> Save to Browser</button>
+                        <button class="btn btn-secondary" onclick="loadFromLocalStorage()"><i
+                                class="mdi mdi-folder-open"></i> Load from Browser</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="preview-area">
+            <div class="preview-header">
+                <h2>Live Preview</h2>
+            </div>
+            <div class="preview-container">
+                <div class="card-preview" id="cardPreview"></div>
+            </div>
+            <div class="output-section">
+                <div class="output-header">
+                    <h3>Generated YAML</h3>
+                    <button class="btn btn-primary" onclick="copyConfig()"><i class="mdi mdi-content-copy"></i>
+                        Copy</button>
+                </div>
+                <div class="output-code">
+                    <pre id="yamlOutput"></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="notification" id="notification">Copied!</div>
+
+    <script>
+        // Popular MDI Icons for quick selection
+        const POPULAR_ICONS = [
+            'lightbulb', 'lightbulb-on', 'lightbulb-off', 'lightbulb-group', 'ceiling-light', 'lamp', 'led-strip', 'wall-sconce',
+            'air-conditioner', 'fan', 'thermometer', 'snowflake', 'fire', 'water-percent',
+            'curtains', 'blinds', 'blinds-horizontal', 'blinds-horizontal-closed', 'window-shutter', 'roller-shade',
+            'sofa', 'bed', 'desk', 'table-furniture', 'chair-rolling', 'toilet',
+            'home', 'home-outline', 'door', 'door-open', 'garage', 'gate',
+            'television', 'speaker', 'cast', 'gamepad-variant', 'desktop-tower',
+            'power', 'power-plug', 'flash', 'lightning-bolt', 'timer', 'clock',
+            'cog', 'wrench', 'tools', 'tune', 'palette',
+            'weather-sunny', 'weather-night', 'weather-cloudy', 'moon-waning-crescent',
+            'food', 'coffee', 'silverware-fork-knife', 'stove',
+            'shower', 'water', 'water-pump', 'pipe',
+            'lock', 'lock-open', 'shield', 'security', 'cctv', 'motion-sensor',
+            'volume-high', 'volume-off', 'bell', 'bell-off',
+            'star', 'heart', 'bookmark', 'check', 'close', 'plus', 'minus',
+            'arrow-up', 'arrow-down', 'arrow-left', 'arrow-right',
+            'play', 'pause', 'stop', 'skip-next', 'skip-previous'
+        ];
+
+        const SECTION_TYPES = [
+            { value: 'toggle', label: 'Toggle (Lights/Switches)' },
+            { value: 'cover', label: 'Cover (Curtains/Blinds)' },
+            { value: 'media_player', label: 'Media Player' }
+        ];
+
+        const CONTROL_MODES = [
+            { value: 'slider', label: 'Slider' },
+            { value: 'buttons', label: 'Buttons' }
+        ];
+
+        const ORIENTATIONS = [
+            { value: 'horizontal', label: 'Horizontal (Left-Right)' },
+            { value: 'vertical', label: 'Vertical (Top-Down)' }
+        ];
+
+        // State
+        let config = {
+            title: 'Living Room',
+            icon: 'mdi:sofa',
+            accent_color: '',
+            collapsed_default: true,
+            lights_title: 'תאורה ומזגן',
+            curtains_title: 'וילונות',
+            media_title: 'מדיה',
+            actions_title: 'פעולות מהירות',
+            sections: [],
+            automations: { enabled: true, title: 'Quick Actions', icon: 'mdi:lightning-bolt' }
+        };
+
+        function updateAccentColor(color) {
+            config.accent_color = color;
+            document.getElementById('accentColor').value = color;
+            document.querySelectorAll('.color-swatch').forEach(s => s.style.borderColor = 'rgba(255,255,255,0.2)');
+            generateYAML();
+        }
+
+        function setAccentColor(color) {
+            updateAccentColor(color);
+            document.querySelectorAll('.color-swatch').forEach(s => {
+                s.style.borderColor = s.getAttribute('onclick').includes(color) ? '#fff' : 'rgba(255,255,255,0.2)';
+            });
+        }
+        let haConnection = { url: '', token: '', connected: false, entities: [] };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            setupTabs();
+            setupIconPickers();
+            setupInputListeners();
+            addSection('lights', 'Lights', 'mdi:lightbulb-group', 'toggle');
+            loadFromLocalStorage(true);
+            updateConfig();
+        });
+
+        function setupTabs() {
+            document.querySelectorAll('.main-tab').forEach(tab => {
+                tab.addEventListener('click', () => {
+                    document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    tab.classList.add('active');
+                    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+                });
+            });
+        }
+
+        function setupIconPickers() {
+            document.querySelectorAll('.icon-dropdown').forEach(dropdown => {
+                let html = '<input type="text" class="form-input icon-search" placeholder="Search icons..." oninput="filterIcons(this)">';
+                html += '<div class="icon-grid">';
+                POPULAR_ICONS.forEach(icon => {
+                    html += `<div class="icon-option" data-icon="mdi:${icon}" onclick="selectIcon(this)"><i class="mdi mdi-${icon}"></i></div>`;
+                });
+                html += '</div>';
+                dropdown.innerHTML = html;
+            });
+        }
+
+        function setupInputListeners() {
+            ['cardTitle', 'cardIcon', 'enableAutomations', 'autoTitle', 'autoIcon', 'collapsedDefault', 'lightsTitle', 'curtainsTitle', 'mediaTitle', 'actionsTitle'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.addEventListener('input', updateConfig);
+                    el.addEventListener('change', updateConfig);
+                }
+            });
+            document.getElementById('cardIcon').addEventListener('input', (e) => {
+                updateIconPreview(e.target.parentNode.querySelector('.icon-preview'), e.target.value);
+            });
+            document.getElementById('autoIcon').addEventListener('input', (e) => {
+                updateIconPreview(e.target.parentNode.querySelector('.icon-preview'), e.target.value);
+            });
+        }
+
+        function toggleIconPicker(btn) {
+            const dropdown = btn.closest('.icon-picker-wrapper').querySelector('.icon-dropdown');
+            document.querySelectorAll('.icon-dropdown').forEach(d => { if (d !== dropdown) d.classList.remove('show'); });
+            dropdown.classList.toggle('show');
+        }
+
+        function filterIcons(input) {
+            const query = input.value.toLowerCase();
+            const grid = input.nextElementSibling;
+            grid.querySelectorAll('.icon-option').forEach(opt => {
+                const iconName = opt.dataset.icon.replace('mdi:', '');
+                opt.style.display = iconName.includes(query) ? '' : 'none';
+            });
+        }
+
+        function selectIcon(opt) {
+            const wrapper = opt.closest('.icon-picker-wrapper');
+            const input = wrapper.querySelector('input[type="text"]');
+            const preview = wrapper.querySelector('.icon-preview');
+            input.value = opt.dataset.icon;
+            updateIconPreview(preview, opt.dataset.icon);
+            wrapper.querySelector('.icon-dropdown').classList.remove('show');
+            updateConfig();
+        }
+
+        function updateIconPreview(preview, iconValue) {
+            const iconClass = iconValue.replace('mdi:', 'mdi-');
+            preview.innerHTML = `<i class="mdi ${iconClass}"></i>`;
+        }
+
+        // Section Management
+        function addSection(id = '', title = '', icon = '', type = 'toggle') {
+            const container = document.getElementById('sectionsContainer');
+            const sectionId = id || `section_${Date.now()}`;
+            const html = `
+                <div class="dynamic-item" data-section-id="${sectionId}">
+                    <div class="dynamic-item-header">
+                        <span class="dynamic-item-title">Section</span>
+                        <button class="btn-remove" onclick="removeSection(this)"><i class="mdi mdi-close"></i></button>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Section ID</label>
+                        <input type="text" class="form-input section-id" value="${id || 'lights'}" placeholder="lights">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Title</label>
+                        <input type="text" class="form-input section-title" value="${title || 'Lights'}" placeholder="Lights">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Icon</label>
+                        <div class="icon-picker-wrapper">
+                            <div class="icon-picker-input">
+                                <input type="text" class="form-input section-icon" value="${icon || 'mdi:lightbulb-group'}">
+                                <div class="icon-preview" onclick="toggleIconPicker(this)"><i class="mdi ${(icon || 'mdi:lightbulb-group').replace('mdi:', 'mdi-')}"></i></div>
+                            </div>
+                            <div class="icon-dropdown"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Type</label>
+                        <select class="form-input section-type">
+                            ${SECTION_TYPES.map(t => `<option value="${t.value}" ${type === t.value ? 'selected' : ''}>${t.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group cover-options" style="display: ${type === 'cover' ? 'block' : 'none'}">
+                        <label class="form-label">Control Mode</label>
+                        <select class="form-input section-control-mode">
+                            ${CONTROL_MODES.map(m => `<option value="${m.value}">${m.label}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Entities</label>
+                        <div class="entities-list dynamic-list"></div>
+                        <button class="btn-add" onclick="addEntity(this)" style="margin-top: 8px"><i class="mdi mdi-plus"></i> Add Entity</button>
+                    </div>
+                </div>
+            `;
+            container.insertAdjacentHTML('beforeend', html);
+            const newSection = container.lastElementChild;
+            setupSectionListeners(newSection);
+            setupIconPickers();
+            addEntity(newSection.querySelector('.entities-list + .btn-add'));
+            updateConfig();
+        }
+
+        function setupSectionListeners(section) {
+            section.querySelectorAll('input, select').forEach(input => {
+                input.addEventListener('input', updateConfig);
+                input.addEventListener('change', updateConfig);
+            });
+            section.querySelector('.section-type').addEventListener('change', (e) => {
+                section.querySelector('.cover-options').style.display = e.target.value === 'cover' ? 'block' : 'none';
+                section.querySelectorAll('.entity-cover-options').forEach(opt => {
+                    opt.style.display = e.target.value === 'cover' ? 'block' : 'none';
+                });
+                section.querySelectorAll('.exclude-option').forEach(opt => {
+                    opt.style.display = e.target.value === 'media_player' ? 'none' : 'flex';
+                });
+                updateConfig();
+            });
+            section.querySelector('.section-icon').addEventListener('input', (e) => {
+                updateIconPreview(e.target.parentNode.querySelector('.icon-preview'), e.target.value);
+            });
+        }
+
+        function removeSection(btn) {
+            btn.closest('.dynamic-item').remove();
+            updateConfig();
+        }
+
+        function addEntity(btn) {
+            const list = btn.previousElementSibling;
+            const section = btn.closest('.dynamic-item[data-section-id]');
+            const type = section.querySelector('.section-type').value;
+            const placeholder = type === 'cover' ? 'cover.example' : type === 'media_player' ? 'media_player.example' : 'switch.example';
+            const iconPlaceholder = type === 'media_player' ? 'mdi:speaker' : type === 'cover' ? 'mdi:curtains' : 'mdi:lightbulb';
+            const html = `
+                <div class="dynamic-item" style="padding: 10px;">
+                    <div class="dynamic-item-header" style="margin-bottom: 8px; padding-bottom: 6px;">
+                        <span class="dynamic-item-title" style="font-size: 0.75rem;">Entity</span>
+                        <button class="btn-remove" onclick="removeEntity(this)" style="width: 20px; height: 20px;"><i class="mdi mdi-close" style="font-size: 12px;"></i></button>
+                    </div>
+                    <div class="form-group">
+                        <div style="position: relative;">
+                            <input type="text" class="form-input entity-id" placeholder="${placeholder}" style="font-size: 0.8rem; padding: 8px;" onfocus="showEntityDropdown(this)" oninput="filterEntityDropdown(this)">
+                            <div class="entity-dropdown"></div>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <input type="text" class="form-input entity-name" placeholder="Display Name" style="font-size: 0.8rem; padding: 8px;">
+                    </div>
+                    <div class="form-group">
+                        <div class="icon-picker-wrapper">
+                            <div class="icon-picker-input">
+                                <input type="text" class="form-input entity-icon" placeholder="${iconPlaceholder}" style="font-size: 0.8rem; padding: 8px;">
+                                <div class="icon-preview" onclick="toggleIconPicker(this)" style="width: 32px; height: 32px; font-size: 16px;"><i class="mdi ${iconPlaceholder.replace('mdi:', 'mdi-')}"></i></div>
+                            </div>
+                            <div class="icon-dropdown"></div>
+                        </div>
+                    </div>
+                    <div class="entity-cover-options" style="display: ${type === 'cover' ? 'block' : 'none'}">
+                        <div class="form-group">
+                            <select class="form-input entity-orientation" style="font-size: 0.8rem; padding: 8px;">
+                                ${ORIENTATIONS.map(o => `<option value="${o.value}">${o.label}</option>`).join('')}
+                            </select>
+                        </div>
+                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); margin-top: 6px;">
+                            <input type="checkbox" class="entity-reversed" style="accent-color: var(--accent);">
+                            Reversed Logic
+                        </label>
+                    </div>
+                    <label style="display: ${type === 'media_player' ? 'none' : 'flex'}; align-items: center; gap: 6px; font-size: 0.75rem; color: var(--text-secondary); margin-top: 6px;" class="exclude-option">
+                        <input type="checkbox" class="entity-exclude" style="accent-color: var(--accent);">
+                        Exclude from Quick Actions
+                    </label>
+                </div>
+            `;
+            list.insertAdjacentHTML('beforeend', html);
+            const newEntity = list.lastElementChild;
+            newEntity.querySelectorAll('input, select').forEach(input => {
+                input.addEventListener('input', updateConfig);
+                input.addEventListener('change', updateConfig);
+            });
+            newEntity.querySelector('.entity-icon').addEventListener('input', (e) => {
+                updateIconPreview(e.target.parentNode.querySelector('.icon-preview'), e.target.value || 'mdi:lightbulb');
+            });
+            setupIconPickers();
+            updateConfig();
+        }
+
+        function removeEntity(btn) {
+            btn.closest('.dynamic-item').remove();
+            updateConfig();
+        }
+
+        // Home Assistant Connection
+        async function connectToHA() {
+            const url = document.getElementById('haUrl').value.replace(/\/$/, '');
+            const token = document.getElementById('haToken').value;
+            if (!url || !token) {
+                showNotification('Please enter URL and token', 'error');
+                return;
+            }
+            updateConnectionStatus('connecting', 'Connecting...');
+
+            // Try direct connection first
+            try {
+                const response = await fetch(`${url}/api/states`, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    mode: 'cors'
+                });
+                if (!response.ok) throw new Error('Connection failed: ' + response.status);
+                const entities = await response.json();
+                haConnection = { url, token, connected: true, entities };
+                updateConnectionStatus('connected', `Connected (${entities.length} entities)`);
+                document.getElementById('entitiesSection').style.display = 'block';
+                renderEntityList();
+                localStorage.setItem('ha_url', url);
+                localStorage.setItem('ha_token', token);
+                return;
+            } catch (error) {
+                console.log('Direct connection failed:', error.message);
+
+                // Check if CORS error
+                if (error.message.includes('CORS') || error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                    updateConnectionStatus('disconnected', 'CORS Error - See instructions below');
+                    showCorsHelp();
+                    return;
+                }
+                updateConnectionStatus('disconnected', 'Connection failed: ' + error.message);
+            }
+        }
+
+        function showCorsHelp() {
+            const helpHtml = `
+                <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid #fbbf24; border-radius: 8px; padding: 12px; margin-top: 12px; font-size: 0.75rem;">
+                    <strong style="color: #fbbf24;">⚠️ CORS Error</strong>
+                    <p style="color: var(--text-secondary); margin-top: 8px;">
+                        Browser blocks cross-origin requests from local files. Choose one solution:
+                    </p>
+                    <ol style="color: var(--text-secondary); margin: 8px 0 0 16px; line-height: 1.6;">
+                        <li><strong>Run a local server</strong>: Open terminal in this folder and run:<br>
+                            <code style="background: rgba(0,0,0,0.3); padding: 2px 6px; border-radius: 4px;">python -m http.server 8080</code><br>
+                            Then open <a href="http://localhost:8080/wizard.html" target="_blank" style="color: var(--accent);">http://localhost:8080/wizard.html</a>
+                        </li>
+                        <li><strong>Add CORS headers to HA</strong>: In your <code>configuration.yaml</code>:<br>
+                            <pre style="background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; margin-top: 4px; overflow-x: auto;">http:
+  cors_allowed_origins:
+    - "*"</pre>
+                        </li>
+                        <li><strong>Use HA Ingress</strong>: Host this file in your HA www folder and access via HA URL.</li>
+                    </ol>
+                </div>
+            `;
+            const container = document.getElementById('connectionStatus');
+            container.insertAdjacentHTML('afterend', helpHtml);
+        }
+
+        function disconnectHA() {
+            haConnection = { url: '', token: '', connected: false, entities: [] };
+            updateConnectionStatus('disconnected', 'Not connected');
+            document.getElementById('entitiesSection').style.display = 'none';
+        }
+
+        function updateConnectionStatus(status, text) {
+            const el = document.getElementById('connectionStatus');
+            el.className = 'connection-status ' + status;
+            document.getElementById('statusText').textContent = text;
+        }
+
+        function renderEntityList() {
+            const domain = document.getElementById('entityDomainFilter').value;
+            const filtered = haConnection.entities.filter(e => !domain || e.entity_id.startsWith(domain + '.'));
+            const html = filtered.slice(0, 100).map(e => `
+                <div class="entity-option" onclick="copyEntityId('${e.entity_id}')">
+                    <div class="entity-name">${e.attributes.friendly_name || e.entity_id}</div>
+                    <div class="entity-id">${e.entity_id} - ${e.state}</div>
+                </div>
+            `).join('');
+            document.getElementById('entityList').innerHTML = html || '<p style="color: var(--text-muted); font-size: 0.8rem;">No entities found</p>';
+        }
+
+        function filterEntities() { renderEntityList(); }
+
+        function copyEntityId(id) {
+            navigator.clipboard.writeText(id);
+            showNotification('Copied: ' + id);
+        }
+
+        function showEntityDropdown(input) {
+            if (!haConnection.connected) return;
+            const dropdown = input.nextElementSibling;
+            const section = input.closest('.dynamic-item[data-section-id]');
+            const type = section?.querySelector('.section-type')?.value || 'toggle';
+            const domain = type === 'cover' ? 'cover' : type === 'media_player' ? 'media_player' : '';
+            const filtered = haConnection.entities.filter(e => !domain || e.entity_id.startsWith(domain + '.'));
+            dropdown.innerHTML = filtered.slice(0, 50).map(e => `
+                <div class="entity-option" onclick="selectEntity(this, '${e.entity_id}', '${(e.attributes.friendly_name || '').replace(/'/g, "\\'")}')">
+                    <div class="entity-name">${e.attributes.friendly_name || e.entity_id}</div>
+                    <div class="entity-id">${e.entity_id}</div>
+                </div>
+            `).join('');
+            dropdown.classList.add('show');
+        }
+
+        function filterEntityDropdown(input) {
+            const query = input.value.toLowerCase();
+            const dropdown = input.nextElementSibling;
+            dropdown.querySelectorAll('.entity-option').forEach(opt => {
+                const text = opt.textContent.toLowerCase();
+                opt.style.display = text.includes(query) ? '' : 'none';
+            });
+        }
+
+        function selectEntity(opt, id, name) {
+            const wrapper = opt.closest('.dynamic-item');
+            wrapper.querySelector('.entity-id').value = id;
+            if (name) wrapper.querySelector('.entity-name').value = name;
+            opt.closest('.entity-dropdown').classList.remove('show');
+            updateConfig();
+        }
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.entity-dropdown') && !e.target.classList.contains('entity-id')) {
+                document.querySelectorAll('.entity-dropdown').forEach(d => d.classList.remove('show'));
+            }
+            if (!e.target.closest('.icon-picker-wrapper')) {
+                document.querySelectorAll('.icon-dropdown').forEach(d => d.classList.remove('show'));
+            }
+        });
+
+        // Import/Export
+        function importConfig() {
+            const yaml = document.getElementById('importYaml').value;
+            if (!yaml) { showNotification('Please paste YAML first', 'error'); return; }
+            try {
+                const parsed = parseSimpleYaml(yaml);
+                document.getElementById('cardTitle').value = parsed.title || 'Living Room';
+                document.getElementById('cardIcon').value = parsed.icon || 'mdi:home';
+                updateIconPreview(document.querySelector('#cardIcon').parentNode.querySelector('.icon-preview'), parsed.icon || 'mdi:home');
+                if (parsed.accent_color) {
+                    updateAccentColor(parsed.accent_color.replace(/'/g, ''));
+                }
+                document.getElementById('collapsedDefault').checked = parsed.collapsed_default !== 'false';
+                if (parsed.lights_title) document.getElementById('lightsTitle').value = parsed.lights_title;
+                if (parsed.curtains_title) document.getElementById('curtainsTitle').value = parsed.curtains_title;
+                if (parsed.media_title) document.getElementById('mediaTitle').value = parsed.media_title;
+                if (parsed.actions_title) document.getElementById('actionsTitle').value = parsed.actions_title;
+
+                document.getElementById('sectionsContainer').innerHTML = '';
+
+                // Import lights as toggle section
+                if (parsed.lights && parsed.lights.length) {
+                    addSection('lights', 'Lights', 'mdi:lightbulb-group', 'toggle');
+                    const sectionEl = document.getElementById('sectionsContainer').lastElementChild;
+                    const entitiesList = sectionEl.querySelector('.entities-list');
+                    entitiesList.innerHTML = '';
+                    parsed.lights.forEach(e => {
+                        addEntity(sectionEl.querySelector('.entities-list + .btn-add'));
+                        const entityEl = entitiesList.lastElementChild;
+                        entityEl.querySelector('.entity-id').value = e.entity || '';
+                        entityEl.querySelector('.entity-name').value = e.name || '';
+                        entityEl.querySelector('.entity-icon').value = e.icon || '';
+                        if (e.exclude_from_actions) entityEl.querySelector('.entity-exclude').checked = true;
+                    });
+                }
+
+                // Import curtains as cover section
+                if (parsed.curtains && parsed.curtains.length) {
+                    addSection('curtains', 'Curtains', 'mdi:curtains', 'cover');
+                    const sectionEl = document.getElementById('sectionsContainer').lastElementChild;
+                    const entitiesList = sectionEl.querySelector('.entities-list');
+                    entitiesList.innerHTML = '';
+                    parsed.curtains.forEach(e => {
+                        addEntity(sectionEl.querySelector('.entities-list + .btn-add'));
+                        const entityEl = entitiesList.lastElementChild;
+                        entityEl.querySelector('.entity-id').value = e.entity || '';
+                        entityEl.querySelector('.entity-name').value = e.name || '';
+                        if (e.reversed) entityEl.querySelector('.entity-reversed').checked = true;
+                        if (e.exclude_from_actions) entityEl.querySelector('.entity-exclude').checked = true;
+                    });
+                }
+
+                // Import media_players section
+                if (parsed.media_players && parsed.media_players.length) {
+                    addSection('media', 'Media Players', 'mdi:speaker', 'media_player');
+                    const sectionEl = document.getElementById('sectionsContainer').lastElementChild;
+                    const entitiesList = sectionEl.querySelector('.entities-list');
+                    entitiesList.innerHTML = '';
+                    parsed.media_players.forEach(e => {
+                        addEntity(sectionEl.querySelector('.entities-list + .btn-add'));
+                        const entityEl = entitiesList.lastElementChild;
+                        entityEl.querySelector('.entity-id').value = e.entity || '';
+                        entityEl.querySelector('.entity-name').value = e.name || '';
+                        entityEl.querySelector('.entity-icon').value = e.icon || '';
+                    });
+                }
+
+                updateConfig();
+                showNotification('Configuration imported!');
+            } catch (e) {
+                showNotification('Failed to parse YAML: ' + e.message, 'error');
+            }
+        }
+
+        function parseSimpleYaml(yaml) {
+            const result = { lights: [], curtains: [], media_players: [] };
+            const lines = yaml.split('\n');
+            let currentList = null, currentEntity = null;
+            lines.forEach(line => {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) return;
+                const indent = line.search(/\S/);
+
+                // Top-level keys
+                if (indent === 0) {
+                    if (trimmed.startsWith('title:')) result.title = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('icon:') && !trimmed.startsWith('icon:')) result.icon = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed === 'icon:') result.icon = '';
+                    else if (trimmed.startsWith('accent_color:')) result.accent_color = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('collapsed_default:')) result.collapsed_default = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('lights_title:')) result.lights_title = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('curtains_title:')) result.curtains_title = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('media_title:')) result.media_title = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed.startsWith('actions_title:')) result.actions_title = trimmed.split(':').slice(1).join(':').trim();
+                    else if (trimmed === 'lights:') { currentList = result.lights; currentEntity = null; }
+                    else if (trimmed === 'curtains:') { currentList = result.curtains; currentEntity = null; }
+                    else if (trimmed === 'media_players:') { currentList = result.media_players; currentEntity = null; }
+                    // Handle icon: mdi:something (colon in value)
+                    if (trimmed.match(/^icon:\s*mdi:/)) result.icon = trimmed.replace(/^icon:\s*/, '');
+                    return;
+                }
+
+                if (!currentList) return;
+
+                if (trimmed.startsWith('- entity:')) {
+                    currentEntity = { entity: trimmed.replace('- entity:', '').trim() };
+                    currentList.push(currentEntity);
+                } else if (currentEntity && indent >= 4) {
+                    const [key, ...vals] = trimmed.split(':');
+                    const value = vals.join(':').trim();
+                    if (key && vals.length) {
+                        currentEntity[key.trim()] = value === 'true' ? true : value === 'false' ? false : value;
+                    }
+                }
+            });
+            return result;
+        }
+
+        function saveToLocalStorage() {
+            localStorage.setItem('yangc_config', JSON.stringify(config));
+            showNotification('Configuration saved!');
+        }
+
+        function loadFromLocalStorage(silent = false) {
+            const saved = localStorage.getItem('yangc_config');
+            if (saved) {
+                try {
+                    const parsed = JSON.parse(saved);
+                    if (!silent) showNotification('Configuration loaded!');
+                } catch (e) { if (!silent) showNotification('Failed to load', 'error'); }
+            }
+            const haUrl = localStorage.getItem('ha_url');
+            const haToken = localStorage.getItem('ha_token');
+            if (haUrl) document.getElementById('haUrl').value = haUrl;
+            if (haToken) document.getElementById('haToken').value = haToken;
+        }
+
+        // Config Update
+        function updateConfig() {
+            config.title = document.getElementById('cardTitle').value;
+            config.icon = document.getElementById('cardIcon').value;
+            config.collapsed_default = document.getElementById('collapsedDefault').checked;
+            config.lights_title = document.getElementById('lightsTitle').value;
+            config.curtains_title = document.getElementById('curtainsTitle').value;
+            config.media_title = document.getElementById('mediaTitle').value;
+            config.actions_title = document.getElementById('actionsTitle').value;
+            config.automations.enabled = document.getElementById('enableAutomations').checked;
+            config.automations.title = document.getElementById('autoTitle').value;
+            config.automations.icon = document.getElementById('autoIcon').value;
+            config.sections = [];
+            document.querySelectorAll('#sectionsContainer > .dynamic-item').forEach(sectionEl => {
+                const section = {
+                    id: sectionEl.querySelector('.section-id').value,
+                    title: sectionEl.querySelector('.section-title').value,
+                    icon: sectionEl.querySelector('.section-icon').value,
+                    type: sectionEl.querySelector('.section-type').value,
+                    entities: []
+                };
+                if (section.type === 'cover') section.control_mode = sectionEl.querySelector('.section-control-mode').value;
+                sectionEl.querySelectorAll('.entities-list > .dynamic-item').forEach(entityEl => {
+                    const entity = {
+                        entity: entityEl.querySelector('.entity-id').value,
+                        name: entityEl.querySelector('.entity-name').value,
+                        icon: entityEl.querySelector('.entity-icon').value
+                    };
+                    if (section.type === 'cover') {
+                        entity.orientation = entityEl.querySelector('.entity-orientation')?.value || 'horizontal';
+                        entity.reversed = entityEl.querySelector('.entity-reversed')?.checked || false;
+                    }
+                    if (section.type !== 'media_player') {
+                        entity.exclude_from_actions = entityEl.querySelector('.entity-exclude')?.checked || false;
+                    }
+                    if (entity.entity) section.entities.push(entity);
+                });
+                if (section.id) config.sections.push(section);
+            });
+            renderPreview();
+            generateYAML();
+        }
+
+        function renderPreview() {
+            const preview = document.getElementById('cardPreview');
+            let sectionsHtml = config.sections.map(section => {
+                if (!section.entities.length) return '';
+                let contentHtml = '';
+                if (section.type === 'toggle') {
+                    contentHtml = `<div class="toggle-grid">${section.entities.map((e, i) => `
+                        <div class="toggle-btn ${i === 0 ? 'active' : ''}" onclick="this.classList.toggle('active')">
+                            <i class="mdi ${(e.icon || 'mdi:toggle-switch').replace('mdi:', 'mdi-')} toggle-icon"></i>
+                            <span class="toggle-name">${e.name || e.entity}</span>
+                        </div>
+                    `).join('')}</div>`;
+                } else if (section.type === 'cover') {
+                    contentHtml = section.entities.map(e => `
+                        <div class="cover-item">
+                            <div class="cover-icon-wrapper"><i class="mdi mdi-curtains"></i></div>
+                            <div class="cover-info">
+                                <span class="cover-name">${e.name || e.entity}</span>
+                                <span class="cover-state">65% Open</span>
+                            </div>
+                            ${section.control_mode === 'slider' ? `
+                                <div class="slider-container">
+                                    <input type="range" class="cover-slider" value="65" min="0" max="100">
+                                    <span class="slider-value">65%</span>
+                                    <button class="slider-set-btn">Set</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('');
+                } else if (section.type === 'media_player') {
+                    contentHtml = section.entities.map(e => `
+                        <div class="cover-item" style="flex-direction: column; align-items: stretch; gap: 10px;">
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <div class="cover-icon-wrapper"><i class="mdi ${(e.icon || 'mdi:speaker').replace('mdi:', 'mdi-')}"></i></div>
+                                <div class="cover-info">
+                                    <span class="cover-name">${e.name || e.entity}</span>
+                                    <span class="cover-state" style="color: var(--text-muted);">Idle</span>
+                                </div>
+                            </div>
+                            <div style="display: flex; justify-content: center; gap: 12px;">
+                                <div class="auto-btn" style="width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%;"><i class="mdi mdi-power" style="font-size: 18px;"></i></div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                return `<div class="section">
+                    <div class="section-title">
+                        <i class="mdi ${section.icon.replace('mdi:', 'mdi-')} section-icon"></i>
+                        <span>${section.title}</span>
+                    </div>
+                    ${contentHtml}
+                </div>`;
+            }).join('');
+            let automationsHtml = '';
+            const hasToggle = config.sections.some(s => s.type === 'toggle');
+            const hasCover = config.sections.some(s => s.type === 'cover');
+            if (config.automations.enabled && (hasToggle || hasCover)) {
+                const buttons = [];
+                if (hasCover) {
+                    buttons.push(`<div class="auto-btn"><i class="mdi mdi-curtains"></i><span>פתח וילונות</span></div>`);
+                    buttons.push(`<div class="auto-btn"><i class="mdi mdi-blinds-horizontal-closed"></i><span>סגור וילונות</span></div>`);
+                } else {
+                    buttons.push(`<div class="auto-btn"><i class="mdi mdi-lightbulb-on"></i><span>הדלק הכל</span></div>`);
+                }
+                buttons.push(`<div class="auto-btn"><i class="mdi mdi-power-sleep"></i><span>${hasCover ? 'סגור וכבה הכל' : 'כבה הכל'}</span></div>`);
+                automationsHtml = `<div class="section automations-section">
+                    <div class="section-title">
+                        <i class="mdi ${config.automations.icon.replace('mdi:', 'mdi-')} section-icon"></i>
+                        <span>${config.actions_title || config.automations.title}</span>
+                    </div>
+                    <div class="automations-grid">${buttons.join('')}</div>
+                </div>`;
+            }
+            preview.innerHTML = `
+                <div class="card-header" style="cursor: pointer;" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? '' : 'none'; this.querySelector('.header-chevron').style.transform = this.nextElementSibling.style.display === 'none' ? 'rotate(-90deg)' : ''">
+                    <i class="mdi ${config.icon.replace('mdi:', 'mdi-')} header-icon"></i>
+                    <span class="header-title">${config.title}</span>
+                    <i class="mdi mdi-chevron-down header-chevron" style="margin-left: auto; opacity: 0.7; transition: transform 0.3s;"></i>
+                </div>
+                <div class="content" ${config.collapsed_default ? 'style="display:none"' : ''}>${sectionsHtml}${automationsHtml}</div>
+            `;
+        }
+
+        function generateYAML() {
+            let yaml = `type: custom:yangc\ntitle: ${config.title}\nicon: ${config.icon}\n`;
+            if (config.accent_color && config.accent_color !== '#667eea') {
+                yaml += `accent_color: '${config.accent_color}'\n`;
+            }
+            if (!config.collapsed_default) {
+                yaml += `collapsed_default: false\n`;
+            }
+            if (config.lights_title && config.lights_title !== 'תאורה ומזגן') {
+                yaml += `lights_title: ${config.lights_title}\n`;
+            }
+            if (config.curtains_title && config.curtains_title !== 'וילונות') {
+                yaml += `curtains_title: ${config.curtains_title}\n`;
+            }
+            if (config.media_title && config.media_title !== 'מדיה') {
+                yaml += `media_title: ${config.media_title}\n`;
+            }
+            if (config.actions_title && config.actions_title !== 'פעולות מהירות') {
+                yaml += `actions_title: ${config.actions_title}\n`;
+            }
+
+            // Collect entities by type
+            const lights = [];
+            const curtains = [];
+            const mediaPlayers = [];
+            config.sections.forEach(s => {
+                s.entities.forEach(e => {
+                    if (s.type === 'toggle') lights.push(e);
+                    else if (s.type === 'cover') curtains.push(e);
+                    else if (s.type === 'media_player') mediaPlayers.push(e);
+                });
+            });
+
+            if (lights.length > 0) {
+                yaml += `lights:\n`;
+                lights.forEach(e => {
+                    yaml += `  - entity: ${e.entity}\n`;
+                    if (e.name) yaml += `    name: ${e.name}\n`;
+                    if (e.icon) yaml += `    icon: ${e.icon}\n`;
+                    if (e.exclude_from_actions) yaml += `    exclude_from_actions: true\n`;
+                });
+            }
+
+            if (curtains.length > 0) {
+                yaml += `curtains:\n`;
+                curtains.forEach(e => {
+                    yaml += `  - entity: ${e.entity}\n`;
+                    if (e.name) yaml += `    name: ${e.name}\n`;
+                    if (e.reversed) yaml += `    reversed: true\n`;
+                    if (e.exclude_from_actions) yaml += `    exclude_from_actions: true\n`;
+                });
+            }
+
+            if (mediaPlayers.length > 0) {
+                yaml += `media_players:\n`;
+                mediaPlayers.forEach(e => {
+                    yaml += `  - entity: ${e.entity}\n`;
+                    if (e.name) yaml += `    name: ${e.name}\n`;
+                    if (e.icon) yaml += `    icon: ${e.icon}\n`;
+                });
+            }
+
+            document.getElementById('yamlOutput').textContent = yaml;
+        }
+
+        function copyConfig() {
+            navigator.clipboard.writeText(document.getElementById('yamlOutput').textContent);
+            showNotification('Copied!');
+        }
+
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.background = type === 'error' ? 'var(--danger)' : 'var(--success)';
+            notification.classList.add('show');
+            setTimeout(() => notification.classList.remove('show'), 2000);
+        }
+    </script>
+</body>
+
+</html>
