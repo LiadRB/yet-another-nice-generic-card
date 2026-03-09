@@ -1505,8 +1505,7 @@
                 // Top-level keys
                 if (indent === 0) {
                     if (trimmed.startsWith('title:')) result.title = trimmed.split(':').slice(1).join(':').trim();
-                    else if (trimmed.startsWith('icon:') && !trimmed.startsWith('icon:')) result.icon = trimmed.split(':').slice(1).join(':').trim();
-                    else if (trimmed === 'icon:') result.icon = '';
+                    else if (trimmed.startsWith('icon:')) result.icon = trimmed.replace(/^icon:\s*/, '').trim() || '';
                     else if (trimmed.startsWith('accent_color:')) result.accent_color = trimmed.split(':').slice(1).join(':').trim();
                     else if (trimmed.startsWith('collapsed_default:')) result.collapsed_default = trimmed.split(':').slice(1).join(':').trim();
                     else if (trimmed.startsWith('lights_title:')) result.lights_title = trimmed.split(':').slice(1).join(':').trim();
@@ -1516,8 +1515,6 @@
                     else if (trimmed === 'lights:') { currentList = result.lights; currentEntity = null; }
                     else if (trimmed === 'curtains:') { currentList = result.curtains; currentEntity = null; }
                     else if (trimmed === 'media_players:') { currentList = result.media_players; currentEntity = null; }
-                    // Handle icon: mdi:something (colon in value)
-                    if (trimmed.match(/^icon:\s*mdi:/)) result.icon = trimmed.replace(/^icon:\s*/, '');
                     return;
                 }
 
@@ -1547,6 +1544,49 @@
             if (saved) {
                 try {
                     const parsed = JSON.parse(saved);
+
+                    // Apply general settings
+                    document.getElementById('cardTitle').value = parsed.title || 'Living Room';
+                    document.getElementById('cardIcon').value = parsed.icon || 'mdi:home';
+                    updateIconPreview(document.querySelector('#cardIcon').parentNode.querySelector('.icon-preview'), parsed.icon || 'mdi:home');
+                    document.getElementById('collapsedDefault').checked = parsed.collapsed_default !== false;
+                    if (parsed.lights_title) document.getElementById('lightsTitle').value = parsed.lights_title;
+                    if (parsed.curtains_title) document.getElementById('curtainsTitle').value = parsed.curtains_title;
+                    if (parsed.media_title) document.getElementById('mediaTitle').value = parsed.media_title;
+                    if (parsed.actions_title) document.getElementById('actionsTitle').value = parsed.actions_title;
+                    if (parsed.accent_color) updateAccentColor(parsed.accent_color);
+
+                    // Recreate sections from saved config
+                    document.getElementById('sectionsContainer').innerHTML = '';
+                    if (parsed.sections && parsed.sections.length) {
+                        parsed.sections.forEach(s => {
+                            addSection(s.id, s.title, s.icon, s.type);
+                            const sectionEl = document.getElementById('sectionsContainer').lastElementChild;
+                            if (s.type === 'cover' && s.control_mode) {
+                                sectionEl.querySelector('.section-control-mode').value = s.control_mode;
+                            }
+                            const entitiesList = sectionEl.querySelector('.entities-list');
+                            entitiesList.innerHTML = '';
+                            if (s.entities) {
+                                s.entities.forEach(e => {
+                                    addEntity(sectionEl.querySelector('.entities-list + .btn-add'));
+                                    const entityEl = entitiesList.lastElementChild;
+                                    entityEl.querySelector('.entity-id').value = e.entity || '';
+                                    entityEl.querySelector('.entity-name').value = e.name || '';
+                                    entityEl.querySelector('.entity-icon').value = e.icon || '';
+                                    if (s.type === 'cover') {
+                                        if (e.orientation) entityEl.querySelector('.entity-orientation').value = e.orientation;
+                                        if (e.reversed) entityEl.querySelector('.entity-reversed').checked = true;
+                                    }
+                                    if (s.type !== 'media_player' && e.exclude_from_actions) {
+                                        entityEl.querySelector('.entity-exclude').checked = true;
+                                    }
+                                });
+                            }
+                        });
+                    }
+
+                    updateConfig();
                     if (!silent) showNotification('Configuration loaded!');
                 } catch (e) { if (!silent) showNotification('Failed to load', 'error'); }
             }
