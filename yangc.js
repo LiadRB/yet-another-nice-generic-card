@@ -27,7 +27,7 @@
  *     reversed: true  # Set to true if open/close are inverted
  */
 
-if (!customElements.get('yangc')) {
+if (!customElements.get('yangc-card')) {
 
 class YangcCard extends HTMLElement {
     constructor() {
@@ -1462,18 +1462,18 @@ class YangcCard extends HTMLElement {
     }
 }
 
-customElements.define('yangc', YangcCard);
+customElements.define('yangc-card', YangcCard);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
-    type: 'yangc',
+    type: 'yangc-card',
     name: 'Yet Another Nice Generic Card',
     description: 'A beautiful card for controlling room lights, AC, curtains, and media players',
     preview: true,
     documentationURL: 'https://github.com/LiadRB/yet-another-nice-generic-card'
 });
 
-} // end if (!customElements.get('yangc'))
+} // end if (!customElements.get('yangc-card'))
 
 console.info(
     '%c YANGC %c Loaded ',

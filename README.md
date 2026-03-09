@@ -42,7 +42,7 @@ resources:
 ## Configuration
 
 ```yaml
-type: custom:yangc
+type: custom:yangc-card
 title: Living Room
 icon: mdi:sofa
 accent_color: '#667eea'        # Optional - hex color (default: blue-purple)

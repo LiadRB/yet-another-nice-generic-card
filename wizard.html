@@ -951,7 +951,7 @@
                     <div class="form-group">
                         <label class="form-label">Paste your existing YAML configuration</label>
                         <textarea class="form-input" id="importYaml"
-                            placeholder="type: custom:yangc&#10;title: My Room&#10;..."></textarea>
+                            placeholder="type: custom:yangc-card&#10;title: My Room&#10;..."></textarea>
                     </div>
                     <button class="btn btn-primary" onclick="importConfig()"><i class="mdi mdi-upload"></i> Import
                         Configuration</button>
@@ -1737,7 +1737,7 @@
         }
 
         function generateYAML() {
-            let yaml = `type: custom:yangc\ntitle: ${config.title}\nicon: ${config.icon}\n`;
+            let yaml = `type: custom:yangc-card\ntitle: ${config.title}\nicon: ${config.icon}\n`;
             if (config.accent_color && config.accent_color !== '#667eea') {
                 yaml += `accent_color: '${config.accent_color}'\n`;
             }
