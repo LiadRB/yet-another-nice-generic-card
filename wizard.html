@@ -44,10 +44,10 @@
 
         /* Sidebar */
         .sidebar {
-            width: 420px;
+            width: 560px;
             background: var(--bg-secondary);
             border-right: 1px solid var(--border);
-            padding: 20px;
+            padding: 24px;
             overflow-y: auto;
             max-height: 100vh;
             flex-shrink: 0;
@@ -113,8 +113,8 @@
             background: var(--bg-tertiary);
             border: 1px solid var(--border);
             border-radius: 14px;
-            padding: 16px;
-            margin-bottom: 14px;
+            padding: 20px;
+            margin-bottom: 16px;
         }
 
         .form-section-title {
@@ -130,7 +130,7 @@
         }
 
         .form-group {
-            margin-bottom: 14px;
+            margin-bottom: 16px;
         }
 
         .form-group:last-child {
@@ -139,19 +139,19 @@
 
         .form-label {
             display: block;
-            font-size: 0.75rem;
+            font-size: 0.8rem;
             color: var(--text-secondary);
             margin-bottom: 5px;
         }
 
         .form-input {
             width: 100%;
-            padding: 10px 12px;
+            padding: 11px 14px;
             background: rgba(0, 0, 0, 0.3);
             border: 1px solid var(--border);
             border-radius: 8px;
             color: var(--text-primary);
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             font-family: inherit;
             transition: all 0.2s ease;
         }
@@ -769,7 +769,7 @@
         }
 
         /* Responsive */
-        @media (max-width: 900px) {
+        @media (max-width: 1040px) {
             .app-container {
                 flex-direction: column;
             }
@@ -790,6 +790,7 @@
             <div class="sidebar-header">
                 <h1>Yet Another Nice Generic Card</h1>
                 <p>Configuration Wizard with Live Preview</p>
+                <span id="autosaveIndicator" style="font-size: 0.7rem; color: var(--success); opacity: 0; transition: opacity 0.3s ease; margin-top: 4px; display: block;">Auto-saved</span>
             </div>
 
             <div class="main-tabs">
@@ -1045,6 +1046,7 @@
             document.getElementById('accentColor').value = color;
             document.querySelectorAll('.color-swatch').forEach(s => s.style.borderColor = 'rgba(255,255,255,0.2)');
             generateYAML();
+            autoSave();
         }
 
         function setAccentColor(color) {
@@ -1557,6 +1559,7 @@
             const saved = localStorage.getItem('yangc_config');
             if (saved) {
                 try {
+                    isLoading = true;
                     const parsed = JSON.parse(saved);
 
                     // Apply general settings
@@ -1600,9 +1603,13 @@
                         });
                     }
 
+                    isLoading = false;
                     updateConfig();
                     if (!silent) showNotification('Configuration loaded!');
-                } catch (e) { if (!silent) showNotification('Failed to load', 'error'); }
+                } catch (e) {
+                    isLoading = false;
+                    if (!silent) showNotification('Failed to load', 'error');
+                }
             }
             const haUrl = localStorage.getItem('ha_url');
             const haToken = localStorage.getItem('ha_token');
@@ -1651,6 +1658,22 @@
             });
             renderPreview();
             generateYAML();
+            autoSave();
+        }
+
+        let autoSaveTimeout = null;
+        let isLoading = false;
+        function autoSave() {
+            if (isLoading) return;
+            if (autoSaveTimeout) clearTimeout(autoSaveTimeout);
+            autoSaveTimeout = setTimeout(() => {
+                localStorage.setItem('yangc_config', JSON.stringify(config));
+                const el = document.getElementById('autosaveIndicator');
+                if (el) {
+                    el.style.opacity = '1';
+                    setTimeout(() => { el.style.opacity = '0'; }, 1500);
+                }
+            }, 300);
         }
 
         function renderPreview() {
@@ -1698,10 +1721,12 @@
                         </div>
                     `).join('');
                 }
+                const overrideMap = { 'toggle': config.lights_title, 'cover': config.curtains_title, 'media_player': config.media_title };
+                const displayTitle = overrideMap[section.type] || section.title;
                 return `<div class="section">
                     <div class="section-title">
                         <i class="mdi ${section.icon.replace('mdi:', 'mdi-')} section-icon"></i>
-                        <span>${section.title}</span>
+                        <span>${displayTitle}</span>
                     </div>
                     ${contentHtml}
                 </div>`;
