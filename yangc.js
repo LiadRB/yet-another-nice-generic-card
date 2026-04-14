@@ -6,12 +6,20 @@
  * type: custom:yangc-card
  * title: פינת אוכל
  * accent_color: '#667eea'  # Optional - hex color for card accent (default: blue-purple)
+ * card_bg_opacity: 0.85     # Optional - card background opacity 0..1 (0 = fully transparent)
+ * header_style: solid       # Optional - card header style: solid | gradient (default: solid)
  * collapsed_default: true  # Optional - whether card starts collapsed (default: true)
+ * status_filters:          # Optional - per-card status filters (default: disabled)
+ *   enabled: true
+ *   domains: []            # Optional list of domains. Empty = all domains.
+ *   entities: []           # Optional explicit entity ids. Empty = all entities (within selected domains).
+ *   visible_filters: []    # Optional visible filter keys on card (empty = all defaults).
  * actions_title: פעולות מהירות
  * sections:
  *   - type: toggle
  *     title: תאורה ומזגן
  *     icon: mdi:lightbulb-group
+ *     collapsible: false     # Optional - whether section icon collapses the section (default: true)
  *     columns: 5            # Per-section grid columns (1-6)
  *     entities:
  *       - entity: switch.mtbkh_switch_4_2
@@ -120,7 +128,153 @@ function _getWizardBridgeScript() {
 
   let editorStackMode = false;
   let hasLoadedConfigFromHost = false;
+  let isApplyingIncomingConfig = false;
   const EMBEDDED_EDITOR_STATE_KEY = '__yangc_editor_state';
+  const STATUS_FILTER_TYPE = 'status_filter';
+  const STATUS_FILTER_SECTION_FLAG = '__yangc_status_filter_section';
+
+  const isStatusFilterType = (value) => (
+    String(value || '').trim().toLowerCase() === STATUS_FILTER_TYPE
+  );
+  const isStatusFilterSectionConfig = (section) => (
+    isStatusFilterType(section?.type) || section?.[STATUS_FILTER_SECTION_FLAG] === true
+  );
+
+  const normalizeStatusFiltersBag = (rawValue) => {
+    const source = rawValue && typeof rawValue === 'object' ? rawValue : {};
+    const normalizeList = (value, toLower = false) => Array.from(new Set(
+      (Array.isArray(value) ? value : [])
+        .map(item => {
+          const normalized = String(item || '').trim();
+          return toLower ? normalized.toLowerCase() : normalized;
+        })
+        .filter(Boolean)
+    ));
+    return {
+      enabled: source.enabled === true,
+      entities: normalizeList(source.entities, false),
+      domains: normalizeList(source.domains, true),
+      visible_filters: normalizeList(source.visible_filters, false),
+      section_ids: normalizeList(source.section_ids, false)
+    };
+  };
+
+  const installStatusFilterCorePatches = () => {
+    try {
+      if (typeof window.getNormalizedSectionType === 'function' && !window.getNormalizedSectionType.__yangcStatusFilterPatched) {
+        const originalGetNormalizedSectionType = window.getNormalizedSectionType;
+        const patchedGetNormalizedSectionType = function(section) {
+          if (isStatusFilterType(section?.type)) return STATUS_FILTER_TYPE;
+          return originalGetNormalizedSectionType.apply(this, arguments);
+        };
+        patchedGetNormalizedSectionType.__yangcStatusFilterPatched = true;
+        window.getNormalizedSectionType = patchedGetNormalizedSectionType;
+      }
+    } catch (error) {}
+
+    try {
+      if (typeof window.getDefaultSectionTitle === 'function' && !window.getDefaultSectionTitle.__yangcStatusFilterPatched) {
+        const originalGetDefaultSectionTitle = window.getDefaultSectionTitle;
+        const patchedGetDefaultSectionTitle = function(sectionType) {
+          if (isStatusFilterType(sectionType)) return 'פילטר';
+          return originalGetDefaultSectionTitle.apply(this, arguments);
+        };
+        patchedGetDefaultSectionTitle.__yangcStatusFilterPatched = true;
+        window.getDefaultSectionTitle = patchedGetDefaultSectionTitle;
+      }
+    } catch (error) {}
+
+    try {
+      if (typeof window.getDefaultSectionIcon === 'function' && !window.getDefaultSectionIcon.__yangcStatusFilterPatched) {
+        const originalGetDefaultSectionIcon = window.getDefaultSectionIcon;
+        const patchedGetDefaultSectionIcon = function(sectionType) {
+          if (isStatusFilterType(sectionType)) return 'mdi:filter-outline';
+          return originalGetDefaultSectionIcon.apply(this, arguments);
+        };
+        patchedGetDefaultSectionIcon.__yangcStatusFilterPatched = true;
+        window.getDefaultSectionIcon = patchedGetDefaultSectionIcon;
+      }
+    } catch (error) {}
+
+    try {
+      if (typeof window.normalizeLoadedConfig === 'function' && !window.normalizeLoadedConfig.__yangcStatusFilterPatched) {
+        const originalNormalizeLoadedConfig = window.normalizeLoadedConfig;
+        const patchedNormalizeLoadedConfig = function(rawConfig = {}) {
+          const normalized = originalNormalizeLoadedConfig.apply(this, arguments);
+          const rawSections = Array.isArray(rawConfig?.sections) ? rawConfig.sections : [];
+          const normalizedSections = Array.isArray(normalized?.sections) ? normalized.sections : [];
+          const normalizedStatusFilters = normalizeStatusFiltersBag(
+            rawConfig?.status_filters || normalized?.status_filters
+          );
+          const persistedStatusFilterSectionIds = new Set(
+            normalizedStatusFilters.section_ids.map(id => String(id || '').trim()).filter(Boolean)
+          );
+
+          if (normalizedSections.length) {
+            const rawById = new Map();
+            if (rawSections.length) {
+              rawSections.forEach(rawSection => {
+                const rawId = String(rawSection?.id || '').trim();
+                if (rawId) rawById.set(rawId, rawSection);
+              });
+            }
+
+            normalized.sections = normalizedSections.map((section, sectionIndex) => {
+              const normalizedSection = section && typeof section === 'object' ? section : {};
+              const sectionId = String(normalizedSection?.id || '').trim();
+              const rawBySectionId = sectionId ? rawById.get(sectionId) : null;
+              const rawByIndex = rawSections[sectionIndex];
+              const rawMatch = isStatusFilterSectionConfig(rawBySectionId)
+                ? rawBySectionId
+                : (isStatusFilterSectionConfig(rawByIndex) ? rawByIndex : null);
+              const shouldBeStatusFilter = !!rawMatch
+                || (sectionId && persistedStatusFilterSectionIds.has(sectionId))
+                || isStatusFilterSectionConfig(normalizedSection);
+              if (!shouldBeStatusFilter) return normalizedSection;
+              return {
+                ...normalizedSection,
+                id: rawMatch?.id || normalizedSection.id || ('section_' + (sectionIndex + 1)),
+                title: rawMatch?.title || normalizedSection.title || 'פילטר',
+                icon: rawMatch?.icon || normalizedSection.icon || 'mdi:filter-outline',
+                type: STATUS_FILTER_TYPE,
+                [STATUS_FILTER_SECTION_FLAG]: true,
+                visible: rawMatch?.visible !== false,
+                entities: []
+              };
+            });
+          }
+
+          const statusFilterSectionIds = Array.isArray(normalized?.sections)
+            ? Array.from(new Set(
+              normalized.sections
+                .filter(section => isStatusFilterSectionConfig(section))
+                .map(section => String(section?.id || '').trim())
+                .filter(Boolean)
+            ))
+            : [];
+          const hasStatusFilterSection = Array.isArray(normalized?.sections)
+            && normalized.sections.some(section => isStatusFilterSectionConfig(section));
+          normalized.status_filters = {
+            ...normalizedStatusFilters,
+            section_ids: statusFilterSectionIds
+          };
+          if (hasStatusFilterSection) {
+            const automationsSource = normalized?.automations && typeof normalized.automations === 'object'
+              ? normalized.automations
+              : {};
+            normalized.automations = {
+              ...automationsSource,
+              enabled: false
+            };
+          }
+
+          return normalized;
+        };
+        patchedNormalizeLoadedConfig.__yangcStatusFilterPatched = true;
+        window.normalizeLoadedConfig = patchedNormalizeLoadedConfig;
+      }
+    } catch (error) {}
+  };
 
   const ensureCardType = (cardConfig = {}) => {
     const normalizedCard = (cardConfig && typeof cardConfig === 'object') ? { ...cardConfig } : {};
@@ -188,24 +342,98 @@ function _getWizardBridgeScript() {
       if (typeof getPersistedState === 'function') {
         const state = getPersistedState();
         if (state && Array.isArray(state.categories) && state.categories.length) {
-          const cards = state.categories
+          const preparedCategories = state.categories.map(category => {
+            const sourceCategory = category && typeof category === 'object' ? category : {};
+            const sourceConfig = sourceCategory?.config && typeof sourceCategory.config === 'object'
+              ? sourceCategory.config
+              : {};
+            return {
+              ...sourceCategory,
+              config: {
+                ...sourceConfig,
+                sections: Array.isArray(sourceConfig?.sections)
+                  ? sourceConfig.sections.map(section => (section && typeof section === 'object') ? { ...section } : section)
+                  : []
+              }
+            };
+          });
+          const cards = preparedCategories
             .map(category => category?.config || {})
             .filter(card => card && typeof card === 'object');
           const rawIndex = Number(state.activeCategoryIndex);
           const safeIndex = Number.isFinite(rawIndex)
-            ? Math.max(0, Math.min(state.categories.length - 1, rawIndex))
+            ? Math.max(0, Math.min(preparedCategories.length - 1, rawIndex))
             : 0;
 
           if (editorStackMode) {
             return buildStackConfig(cards);
           }
 
-          const activeConfig = state.categories[safeIndex]?.config || state.categories[0]?.config || null;
+          const activeConfig = preparedCategories[safeIndex]?.config || preparedCategories[0]?.config || null;
           if (!activeConfig) return null;
 
-          const normalizedActiveConfig = ensureCardType(activeConfig);
-          if (state.categories.length > 1) {
-            const embeddedState = buildEmbeddedEditorState(state.categories, safeIndex);
+          const preparedActiveConfig = (activeConfig && typeof activeConfig === 'object')
+            ? { ...activeConfig }
+            : {};
+          if (Array.isArray(activeConfig?.sections)) {
+            preparedActiveConfig.sections = activeConfig.sections.map(section =>
+              (section && typeof section === 'object') ? { ...section } : section
+            );
+            const persistedStatusFilterSectionIds = Array.isArray(activeConfig?.status_filters?.section_ids)
+              ? new Set(activeConfig.status_filters.section_ids.map(id => String(id || '').trim()).filter(Boolean))
+              : new Set();
+            const sectionEls = Array.from(document.querySelectorAll('.dynamic-item[data-section-id]'));
+            if (sectionEls.length && Array.isArray(preparedActiveConfig.sections)) {
+              const typeById = new Map();
+              const typeByIndex = new Map();
+              sectionEls.forEach((sectionEl, sectionIndex) => {
+                const selectEl = sectionEl?.querySelector?.('.section-type');
+                const normalizedType = String(selectEl?.value || '').trim().toLowerCase() || 'toggle';
+                typeByIndex.set(sectionIndex, normalizedType);
+                const sectionId = String(sectionEl?.dataset?.sectionId || '').trim();
+                if (sectionId) typeById.set(sectionId, normalizedType);
+              });
+              preparedActiveConfig.sections.forEach((section, sectionIndex) => {
+                if (!section || typeof section !== 'object') return;
+                const sectionId = String(section?.id || '').trim();
+                const typeFromDom = (sectionId && typeById.has(sectionId))
+                  ? typeById.get(sectionId)
+                  : typeByIndex.get(sectionIndex);
+                const shouldBeStatusFilter = typeFromDom === STATUS_FILTER_TYPE
+                  || (sectionId && persistedStatusFilterSectionIds.has(sectionId))
+                  || isStatusFilterSectionConfig(section);
+                if (shouldBeStatusFilter) {
+                  section.type = STATUS_FILTER_TYPE;
+                  section[STATUS_FILTER_SECTION_FLAG] = true;
+                  section.entities = [];
+                } else if (typeFromDom) {
+                  if (section[STATUS_FILTER_SECTION_FLAG] === true) {
+                    delete section[STATUS_FILTER_SECTION_FLAG];
+                  }
+                }
+              });
+            }
+            const statusFilterSectionIds = Array.from(new Set(
+              preparedActiveConfig.sections
+                .filter(section => isStatusFilterSectionConfig(section))
+                .map(section => String(section?.id || '').trim())
+                .filter(Boolean)
+            ));
+            preparedActiveConfig.status_filters = {
+              ...normalizeStatusFiltersBag(preparedActiveConfig?.status_filters),
+              section_ids: statusFilterSectionIds
+            };
+          } else {
+            preparedActiveConfig.status_filters = normalizeStatusFiltersBag(preparedActiveConfig?.status_filters);
+          }
+
+          if (preparedCategories[safeIndex] && typeof preparedCategories[safeIndex] === 'object') {
+            preparedCategories[safeIndex].config = preparedActiveConfig;
+          }
+
+          const normalizedActiveConfig = ensureCardType(preparedActiveConfig);
+          if (preparedCategories.length > 1) {
+            const embeddedState = buildEmbeddedEditorState(preparedCategories, safeIndex);
             if (embeddedState) {
               normalizedActiveConfig[EMBEDDED_EDITOR_STATE_KEY] = embeddedState;
             }
@@ -220,6 +448,39 @@ function _getWizardBridgeScript() {
     try {
       if (typeof config !== 'undefined' && typeof normalizeLoadedConfig === 'function') {
         const normalizedCard = ensureCardType(normalizeLoadedConfig(config));
+        const rawSections = Array.isArray(config?.sections) ? config.sections : [];
+        const persistedStatusFilterSectionIds = Array.isArray(config?.status_filters?.section_ids)
+          ? new Set(config.status_filters.section_ids.map(id => String(id || '').trim()).filter(Boolean))
+          : new Set();
+        if (Array.isArray(normalizedCard?.sections) && rawSections.length) {
+          rawSections.forEach((rawSection, rawIndex) => {
+            const rawSectionId = String(rawSection?.id || '').trim();
+            const shouldBeStatusFilter = isStatusFilterSectionConfig(rawSection)
+              || (rawSectionId && persistedStatusFilterSectionIds.has(rawSectionId));
+            if (!shouldBeStatusFilter) return;
+            const normalizedSection = normalizedCard.sections[rawIndex];
+            if (!normalizedSection || typeof normalizedSection !== 'object') return;
+            normalizedSection.type = STATUS_FILTER_TYPE;
+            normalizedSection[STATUS_FILTER_SECTION_FLAG] = true;
+            normalizedSection.entities = [];
+            normalizedSection.visible = rawSection?.visible !== false;
+            if (rawSection?.id) normalizedSection.id = String(rawSection.id);
+            if (rawSection?.title) normalizedSection.title = String(rawSection.title);
+            if (rawSection?.icon) normalizedSection.icon = String(rawSection.icon);
+          });
+        }
+        const normalizedStatusFilterSectionIds = Array.isArray(normalizedCard?.sections)
+          ? Array.from(new Set(
+            normalizedCard.sections
+              .filter(section => isStatusFilterSectionConfig(section))
+              .map(section => String(section?.id || '').trim())
+              .filter(Boolean)
+          ))
+          : [];
+        normalizedCard.status_filters = {
+          ...normalizeStatusFiltersBag(normalizedCard?.status_filters || config?.status_filters),
+          section_ids: normalizedStatusFilterSectionIds
+        };
         if (editorStackMode) {
           return buildStackConfig(
             Array.isArray(categories) && categories.length
@@ -255,18 +516,6 @@ function _getWizardBridgeScript() {
     } else {
       normalizedConfig = ensureCardType(normalizedConfig);
     }
-    const editorLanguage = getEditorLanguage();
-    if (editorLanguage) {
-      if (String(normalizedConfig.type || '').trim().toLowerCase() === 'vertical-stack' && Array.isArray(normalizedConfig.cards)) {
-        normalizedConfig.cards = normalizedConfig.cards.map(card => {
-          const normalizedCard = ensureCardType(card);
-          normalizedCard.language = editorLanguage;
-          return normalizedCard;
-        });
-      } else {
-        normalizedConfig.language = editorLanguage;
-      }
-    }
     try {
       const nextJson = JSON.stringify(normalizedConfig);
       if (nextJson === lastConfigJson) return;
@@ -298,6 +547,7 @@ function _getWizardBridgeScript() {
 
   const applyIncomingConfig = (incomingConfig = {}) => {
     try {
+      isApplyingIncomingConfig = true;
       if (typeof normalizeLoadedConfig !== 'function' || typeof createCategory !== 'function') return;
       const shouldPreserveCollapsedState = hasLoadedConfigFromHost === true;
       const collapsedState = shouldPreserveCollapsedState && typeof captureEditorCollapsedState === 'function'
@@ -337,6 +587,54 @@ function _getWizardBridgeScript() {
       categories = sourceCategories.map((categoryEntry, index) => {
         const cardConfig = categoryEntry?.config || {};
         const normalized = normalizeLoadedConfig(cardConfig);
+        const rawSections = Array.isArray(cardConfig?.sections) ? cardConfig.sections : [];
+        const incomingStatusFilters = normalizeStatusFiltersBag(cardConfig?.status_filters);
+        const persistedStatusFilterSectionIds = new Set(
+          incomingStatusFilters.section_ids.map(id => String(id || '').trim()).filter(Boolean)
+        );
+        if (Array.isArray(normalized?.sections) && normalized.sections.length) {
+          normalized.sections.forEach((normalizedSection, rawIndex) => {
+            if (!normalizedSection || typeof normalizedSection !== 'object') return;
+            const rawSection = rawSections[rawIndex];
+            const normalizedSectionId = String(normalizedSection?.id || '').trim();
+            const rawSectionId = String(rawSection?.id || '').trim();
+            const sectionId = normalizedSectionId || rawSectionId;
+            const shouldBeStatusFilter = isStatusFilterSectionConfig(rawSection)
+              || (sectionId && persistedStatusFilterSectionIds.has(sectionId))
+              || isStatusFilterSectionConfig(normalizedSection);
+            if (!shouldBeStatusFilter) return;
+            normalizedSection.type = STATUS_FILTER_TYPE;
+            normalizedSection[STATUS_FILTER_SECTION_FLAG] = true;
+            normalizedSection.entities = [];
+            normalizedSection.visible = rawSection?.visible !== false;
+            if (rawSection?.id) normalizedSection.id = String(rawSection.id);
+            if (rawSection?.title) normalizedSection.title = String(rawSection.title);
+            if (rawSection?.icon) normalizedSection.icon = String(rawSection.icon);
+          });
+        }
+        const statusFilterSectionIds = Array.isArray(normalized?.sections)
+          ? Array.from(new Set(
+            normalized.sections
+              .filter(section => isStatusFilterSectionConfig(section))
+              .map(section => String(section?.id || '').trim())
+              .filter(Boolean)
+          ))
+          : [];
+        const hasIncomingStatusFilterSection = statusFilterSectionIds.length > 0;
+        if (hasIncomingStatusFilterSection) {
+          normalized.status_filters = {
+            ...incomingStatusFilters,
+            section_ids: statusFilterSectionIds
+          };
+        } else {
+          normalized.status_filters = {
+            enabled: false,
+            entities: [],
+            domains: [],
+            visible_filters: [],
+            section_ids: []
+          };
+        }
         const fallbackName = typeof createDefaultCategoryName === 'function'
           ? createDefaultCategoryName(index)
           : ('קטגוריה ' + (index + 1));
@@ -374,6 +672,8 @@ function _getWizardBridgeScript() {
       emitConfig();
     } catch (error) {
       post({ type: 'yangc-editor-error', message: String(error?.message || error) });
+    } finally {
+      isApplyingIncomingConfig = false;
     }
   };
 
@@ -405,6 +705,9 @@ function _getWizardBridgeScript() {
       }
       if (typeof renderEntityList === 'function') renderEntityList();
       installEntityPickerFixes();
+      if (typeof window.__yangcRefreshStatusFilterEntities === 'function') {
+        window.__yangcRefreshStatusFilterEntities();
+      }
     } catch (error) {}
   };
 
@@ -855,6 +1158,7 @@ function _getWizardBridgeScript() {
 
   // Must run before the wizard's own DOMContentLoaded handler to avoid stale localStorage state.
   disableEmbeddedPersistence();
+  installStatusFilterCorePatches();
 
   window.addEventListener('message', (event) => {
     const data = event?.data;
@@ -1045,12 +1349,1863 @@ function _getWizardBridgeScript() {
     } catch (error) {}
   };
 
+  const installCardTransparencyUi = () => {
+    const CONTROL_ID = 'yangc-card-transparency-control';
+    const STYLE_ID = 'yangc-card-transparency-style';
+    const RANGE_ID = 'yangc-card-transparency-range';
+    const VALUE_ID = 'yangc-card-transparency-value';
+    const HEADER_STYLE_ID = 'yangc-card-header-style';
+
+    const getUiLanguage = () => {
+      try {
+        const rawLanguage = String(typeof currentUILanguage === 'string' ? currentUILanguage : '').trim().toLowerCase();
+        const base = rawLanguage.split(/[-_]/)[0];
+        if (!base) return 'he';
+        return base === 'iw' ? 'he' : base;
+      } catch (error) {
+        return 'he';
+      }
+    };
+
+    const getTranslations = () => ({
+      he: {
+        header_style_label: 'סגנון כותרת הכרטיס',
+        header_style_solid: 'צבע מלא',
+        header_style_gradient: 'גרדיינט',
+        label: 'שקיפות רקע הכרטיס',
+        help: '0% = שקוף לגמרי, 100% = רקע מלא'
+      },
+      en: {
+        header_style_label: 'Card Header Style',
+        header_style_solid: 'Solid Color',
+        header_style_gradient: 'Gradient',
+        label: 'Card Background Transparency',
+        help: '0% = fully transparent, 100% = solid background'
+      },
+      ar: {
+        header_style_label: 'نمط عنوان البطاقة',
+        header_style_solid: 'لون موحّد',
+        header_style_gradient: 'تدرّج',
+        label: 'شفافية خلفية البطاقة',
+        help: '0٪ = شفاف بالكامل، 100٪ = خلفية كاملة'
+      },
+      ru: {
+        header_style_label: 'Стиль заголовка карточки',
+        header_style_solid: 'Сплошной цвет',
+        header_style_gradient: 'Градиент',
+        label: 'Прозрачность фона карточки',
+        help: '0% = полностью прозрачно, 100% = непрозрачный фон'
+      }
+    });
+
+    const t = (key) => {
+      const all = getTranslations();
+      const lang = getUiLanguage();
+      return all[lang]?.[key] || all.en?.[key] || all.he?.[key] || key;
+    };
+
+    const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+
+    const normalizeOpacity = (value, fallback = 0.85) => {
+      const fallbackNumeric = Number.isFinite(Number(fallback)) ? Number(fallback) : 0.85;
+      let numeric = Number(value);
+      if (!Number.isFinite(numeric)) {
+        const raw = String(value ?? '').trim();
+        if (raw.endsWith('%')) {
+          numeric = Number(raw.slice(0, -1).trim());
+        }
+      }
+      if (!Number.isFinite(numeric)) numeric = fallbackNumeric;
+      if (numeric > 1) numeric = numeric / 100;
+      return Math.round(clamp(numeric, 0, 1) * 100) / 100;
+    };
+
+    const opacityToPercent = (opacity) => {
+      const safeOpacity = normalizeOpacity(opacity, 0.85);
+      return clamp(Math.round(safeOpacity * 100), 0, 100);
+    };
+
+    const percentToOpacity = (percent) => {
+      const safePercent = clamp(Number.parseInt(percent, 10) || 0, 0, 100);
+      return Math.round((safePercent / 100) * 100) / 100;
+    };
+
+    const normalizeHeaderStyle = (value, fallback = 'solid') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'gradient') return 'gradient';
+      if (normalized === 'solid') return 'solid';
+      return fallback;
+    };
+
+    const getActiveCardConfig = () => {
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          return categories[activeCategoryIndex].config;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') return config;
+      } catch (error) {}
+      return null;
+    };
+
+    const ensureStyles = () => {
+      try {
+        if (document.getElementById(STYLE_ID)) return;
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+          '#' + CONTROL_ID + ' .yct-row { display: flex; align-items: center; gap: 12px; }',
+          '#' + CONTROL_ID + ' .yct-head-style { margin-bottom: 12px; }',
+          '#' + CONTROL_ID + ' .yct-row input[type="range"] { flex: 1; accent-color: var(--accent); }',
+          '#' + CONTROL_ID + ' .yct-value { min-width: 48px; text-align: center; font-weight: 600; font-size: 0.8rem; color: var(--text-primary); background: rgba(255,255,255,0.08); border: 1px solid var(--border); border-radius: 999px; padding: 4px 8px; }',
+          '#' + CONTROL_ID + ' .yct-help { margin-top: 6px; color: var(--text-muted); font-size: 0.72rem; line-height: 1.35; }'
+        ].join('\\n');
+        (document.head || document.body || document.documentElement).appendChild(style);
+      } catch (error) {}
+    };
+
+    const ensureControl = () => {
+      const existing = document.getElementById(CONTROL_ID);
+      if (existing) return existing;
+
+      const cardTitleInput = document.getElementById('cardTitle');
+      if (!cardTitleInput) return null;
+      const anchorGroup = cardTitleInput.closest('.form-group');
+      const targetParent = anchorGroup?.parentElement || cardTitleInput.closest('.form-section');
+      if (!targetParent) return null;
+
+      const control = document.createElement('div');
+      control.id = CONTROL_ID;
+      control.className = 'form-group';
+      control.innerHTML = [
+        '<div class="yct-head-style">',
+        '  <label class="form-label" for="' + HEADER_STYLE_ID + '" data-yct-header-style-label></label>',
+        '  <select id="' + HEADER_STYLE_ID + '" class="form-input">',
+        '    <option value="solid" data-yct-header-style-solid></option>',
+        '    <option value="gradient" data-yct-header-style-gradient></option>',
+        '  </select>',
+        '</div>',
+        '<label class="form-label" for="' + RANGE_ID + '" data-yct-label></label>',
+        '<div class="yct-row">',
+        '  <input id="' + RANGE_ID + '" type="range" min="0" max="100" step="1" />',
+        '  <span id="' + VALUE_ID + '" class="yct-value">85%</span>',
+        '</div>',
+        '<div class="yct-help" data-yct-help></div>'
+      ].join('');
+
+      if (anchorGroup && anchorGroup.parentElement === targetParent) {
+        targetParent.insertBefore(control, anchorGroup);
+      } else {
+        targetParent.appendChild(control);
+      }
+      return control;
+    };
+
+    const refreshTexts = () => {
+      const control = ensureControl();
+      if (!control) return;
+      const headerStyleLabelEl = control.querySelector('[data-yct-header-style-label]');
+      const headerStyleSolidEl = control.querySelector('[data-yct-header-style-solid]');
+      const headerStyleGradientEl = control.querySelector('[data-yct-header-style-gradient]');
+      const labelEl = control.querySelector('[data-yct-label]');
+      const helpEl = control.querySelector('[data-yct-help]');
+      if (headerStyleLabelEl) headerStyleLabelEl.textContent = t('header_style_label');
+      if (headerStyleSolidEl) headerStyleSolidEl.textContent = t('header_style_solid');
+      if (headerStyleGradientEl) headerStyleGradientEl.textContent = t('header_style_gradient');
+      if (labelEl) labelEl.textContent = t('label');
+      if (helpEl) helpEl.textContent = t('help');
+    };
+
+    const applyOpacityToActiveConfig = (opacityValue) => {
+      const safeOpacity = normalizeOpacity(opacityValue, 0.85);
+      const cardConfig = getActiveCardConfig();
+      if (!cardConfig || typeof cardConfig !== 'object') return;
+      cardConfig.card_bg_opacity = safeOpacity;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          categories[activeCategoryIndex].config.card_bg_opacity = safeOpacity;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          config.card_bg_opacity = safeOpacity;
+        }
+      } catch (error) {}
+    };
+
+    const applyHeaderStyleToActiveConfig = (headerStyleValue) => {
+      const safeHeaderStyle = normalizeHeaderStyle(headerStyleValue, 'solid');
+      const cardConfig = getActiveCardConfig();
+      if (!cardConfig || typeof cardConfig !== 'object') return;
+      cardConfig.header_style = safeHeaderStyle;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          categories[activeCategoryIndex].config.header_style = safeHeaderStyle;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          config.header_style = safeHeaderStyle;
+        }
+      } catch (error) {}
+    };
+
+    const setValuePill = (control, percent) => {
+      const valueEl = control?.querySelector?.('#' + VALUE_ID);
+      if (!valueEl) return;
+      valueEl.textContent = String(clamp(Number.parseInt(percent, 10) || 0, 0, 100)) + '%';
+    };
+
+    const syncUiFromConfig = () => {
+      const control = ensureControl();
+      if (!control) return;
+      const range = control.querySelector('#' + RANGE_ID);
+      const headerStyleSelect = control.querySelector('#' + HEADER_STYLE_ID);
+      if (!range || !headerStyleSelect) return;
+      control.__yctSyncing = true;
+      try {
+        const cardConfig = getActiveCardConfig() || {};
+        const opacityPercent = opacityToPercent(cardConfig.card_bg_opacity);
+        const headerStyle = normalizeHeaderStyle(cardConfig.header_style, 'solid');
+        headerStyleSelect.value = headerStyle;
+        range.value = String(opacityPercent);
+        setValuePill(control, opacityPercent);
+      } finally {
+        control.__yctSyncing = false;
+      }
+    };
+
+    const commitFromUi = (shouldRunUpdateConfig = false) => {
+      const control = ensureControl();
+      if (!control || control.__yctSyncing === true) return;
+      const range = control.querySelector('#' + RANGE_ID);
+      const headerStyleSelect = control.querySelector('#' + HEADER_STYLE_ID);
+      if (!range || !headerStyleSelect) return;
+      const opacityPercent = clamp(Number.parseInt(range.value, 10) || 0, 0, 100);
+      const nextOpacity = percentToOpacity(opacityPercent);
+      const nextHeaderStyle = normalizeHeaderStyle(headerStyleSelect.value, 'solid');
+      setValuePill(control, opacityPercent);
+      applyOpacityToActiveConfig(nextOpacity);
+      applyHeaderStyleToActiveConfig(nextHeaderStyle);
+      if (shouldRunUpdateConfig && typeof updateConfig === 'function') {
+        updateConfig();
+      }
+      setTimeout(emitConfig, 0);
+    };
+
+    const installEvents = () => {
+      const control = ensureControl();
+      if (!control || control.__yctEventsInstalled) return;
+      const range = control.querySelector('#' + RANGE_ID);
+      const headerStyleSelect = control.querySelector('#' + HEADER_STYLE_ID);
+      if (!range || !headerStyleSelect) return;
+      range.addEventListener('input', () => commitFromUi(true));
+      range.addEventListener('change', () => commitFromUi(true));
+      headerStyleSelect.addEventListener('change', () => commitFromUi(true));
+      control.__yctEventsInstalled = true;
+    };
+
+    const wrapWithRefresh = (fnName) => {
+      try {
+        const original = window[fnName];
+        if (typeof original !== 'function' || original.__yangcCardTransparencyWrapped) return;
+        const wrapped = function(...args) {
+          const result = original.apply(this, args);
+          setTimeout(() => {
+            refreshTexts();
+            syncUiFromConfig();
+          }, 0);
+          return result;
+        };
+        wrapped.__yangcCardTransparencyWrapped = true;
+        window[fnName] = wrapped;
+      } catch (error) {}
+    };
+
+    ensureStyles();
+    ensureControl();
+    refreshTexts();
+    installEvents();
+    syncUiFromConfig();
+
+    [
+      'loadActiveCategoryIntoEditor',
+      'selectCategory',
+      'addCategory',
+      'duplicateCategory',
+      'deleteCategory',
+      'setUILanguage',
+      'resetToDefaults'
+    ].forEach(wrapWithRefresh);
+  };
+
+  const installStatusFiltersUi = () => {
+    const PANEL_ID = 'yangc-status-filters-panel';
+    const STYLE_ID = 'yangc-status-filters-style';
+
+    const escapeHtml = (value) => String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
+    const getUiLanguage = () => {
+      try {
+        const rawLanguage = String(typeof currentUILanguage === 'string' ? currentUILanguage : '').trim().toLowerCase();
+        const base = rawLanguage.split(/[-_]/)[0];
+        if (!base) return 'he';
+        return base === 'iw' ? 'he' : base;
+      } catch (error) {
+        return 'he';
+      }
+    };
+
+    const getStatusFilterUiTranslations = () => ({
+      he: {
+        panel_title: 'סינון מצב לקטגוריה',
+        section_type_filter: 'פילטר מצב (ללא ישויות)',
+        section_type_filter_note: 'סקשן מסוג פילטר לא משתמש בישויות סקשן. ההגדרות מנוהלות בפאנל הסינון בלבד.',
+        enable_label: 'הפעל פילטרים בקטגוריה',
+        visible_filters_title: 'בחר אילו פילטרים להציג בכרטיס',
+        domains_title: 'סינון לפי דומיינים (ריק = כל הדומיינים)',
+        domains_show_all: 'הצג את כל הדומיינים',
+        entities_label: 'בחר ישויות לפילטר (אם לא בוחרים כלום = הכל)',
+        entities_domain_quick_title: 'בחירה מהירה של ישויות לפי קטגוריה (דומיין)',
+        entities_search_placeholder: 'חפש ישות...',
+        help: 'הגדרה זו נשמרת לכל קטגוריה בנפרד תחת status_filters.',
+        remove: 'הסר',
+        no_filters_selected: 'לא נבחרו פילטרים. יוצגו כל הפילטרים.',
+        no_domains_selected: 'לא נבחרו דומיינים. יוצגו כל הדומיינים.',
+        no_entities_selected: 'לא נבחרו ישויות. הפילטר יפעל על כל הישויות בקטגוריה.',
+        no_domains_found: 'לא נמצאו דומיינים.',
+        no_entities_by_domain: 'אין ישויות זמינות לפי דומיין.',
+        no_entities_found: 'לא נמצאו ישויות לתצוגה.',
+        all: 'הכל',
+        lights_on: 'מנורות דולקות',
+        covers_open: 'תריסים פתוחים',
+        fans_on: 'מאווררים פעילים',
+        climates_on: 'מזגנים פעילים',
+        domain_light: 'תאורה',
+        domain_cover: 'תריסים',
+        domain_fan: 'מאווררים',
+        domain_climate: 'מזגנים',
+        domain_switch: 'מתגים',
+        domain_media_player: 'מדיה',
+        domain_sensor: 'חיישנים',
+        domain_binary_sensor: 'חיישנים בינאריים',
+        domain_lock: 'מנעולים',
+        domain_scene: 'סצנות',
+        domain_script: 'סקריפטים',
+        domain_button: 'כפתורים',
+        domain_input_boolean: 'מתגי קלט',
+        domain_input_button: 'כפתורי קלט'
+      },
+      en: {
+        panel_title: 'Category Status Filters',
+        section_type_filter: 'Status Filter (no entities)',
+        section_type_filter_note: 'A filter section does not use section entities. Manage everything in this filter panel.',
+        enable_label: 'Enable filters in this category',
+        visible_filters_title: 'Choose which filters to show on card',
+        domains_title: 'Filter by domains (empty = all domains)',
+        domains_show_all: 'Show all domains',
+        entities_label: 'Choose entities for filter (empty = all)',
+        entities_domain_quick_title: 'Quick entity selection by domain category',
+        entities_search_placeholder: 'Search entity...',
+        help: 'This setting is saved per category under status_filters.',
+        remove: 'Remove',
+        no_filters_selected: 'No filters selected. All default filters will be shown.',
+        no_domains_selected: 'No domains selected. All domains will be shown.',
+        no_entities_selected: 'No entities selected. The filter will apply to all entities in this category.',
+        no_domains_found: 'No domains found.',
+        no_entities_by_domain: 'No domain-based entities available.',
+        no_entities_found: 'No entities found.',
+        all: 'All',
+        lights_on: 'Lights On',
+        covers_open: 'Open Covers',
+        fans_on: 'Fans On',
+        climates_on: 'Climates On',
+        domain_light: 'Lights',
+        domain_cover: 'Covers',
+        domain_fan: 'Fans',
+        domain_climate: 'Climates',
+        domain_switch: 'Switches',
+        domain_media_player: 'Media',
+        domain_sensor: 'Sensors',
+        domain_binary_sensor: 'Binary Sensors',
+        domain_lock: 'Locks',
+        domain_scene: 'Scenes',
+        domain_script: 'Scripts',
+        domain_button: 'Buttons',
+        domain_input_boolean: 'Input Booleans',
+        domain_input_button: 'Input Buttons'
+      },
+      ar: {
+        panel_title: 'فلاتر حالة الفئة',
+        section_type_filter: 'فلتر حالة (بدون كيانات)',
+        section_type_filter_note: 'قسم الفلتر لا يستخدم كيانات القسم. تتم الإدارة من لوحة الفلاتر فقط.',
+        enable_label: 'تفعيل الفلاتر في هذه الفئة',
+        visible_filters_title: 'اختر الفلاتر التي تظهر على البطاقة',
+        domains_title: 'تصفية حسب النطاقات (فارغ = كل النطاقات)',
+        domains_show_all: 'عرض كل النطاقات',
+        entities_label: 'اختر كيانات للفلاتر (فارغ = الكل)',
+        entities_domain_quick_title: 'اختيار سريع للكيانات حسب الفئة (النطاق)',
+        entities_search_placeholder: 'ابحث عن كيان...',
+        help: 'يتم حفظ هذا الإعداد لكل فئة بشكل منفصل تحت status_filters.',
+        remove: 'إزالة',
+        no_filters_selected: 'لم يتم اختيار فلاتر. سيتم عرض جميع الفلاتر الافتراضية.',
+        no_domains_selected: 'لم يتم اختيار نطاقات. سيتم عرض كل النطاقات.',
+        no_entities_selected: 'لم يتم اختيار كيانات. سيتم تطبيق الفلتر على كل كيانات هذه الفئة.',
+        no_domains_found: 'لا توجد نطاقات.',
+        no_entities_by_domain: 'لا توجد كيانات متاحة حسب النطاق.',
+        no_entities_found: 'لا توجد كيانات.',
+        all: 'الكل',
+        lights_on: 'أضواء قيد التشغيل',
+        covers_open: 'ستائر مفتوحة',
+        fans_on: 'مراوح تعمل',
+        climates_on: 'مكيفات تعمل',
+        domain_light: 'إضاءة',
+        domain_cover: 'ستائر',
+        domain_fan: 'مراوح',
+        domain_climate: 'مكيفات',
+        domain_switch: 'مفاتيح',
+        domain_media_player: 'وسائط',
+        domain_sensor: 'حساسات',
+        domain_binary_sensor: 'حساسات ثنائية',
+        domain_lock: 'أقفال',
+        domain_scene: 'مشاهد',
+        domain_script: 'سكريبتات',
+        domain_button: 'أزرار',
+        domain_input_boolean: 'Input Boolean',
+        domain_input_button: 'Input Button'
+      },
+      ru: {
+        panel_title: 'Фильтры состояния категории',
+        section_type_filter: 'Фильтр состояния (без сущностей)',
+        section_type_filter_note: 'Секция фильтра не использует сущности секции. Настройка выполняется только в панели фильтров.',
+        enable_label: 'Включить фильтры в этой категории',
+        visible_filters_title: 'Выберите фильтры для отображения на карточке',
+        domains_title: 'Фильтр по доменам (пусто = все домены)',
+        domains_show_all: 'Показать все домены',
+        entities_label: 'Выберите сущности для фильтра (пусто = все)',
+        entities_domain_quick_title: 'Быстрый выбор сущностей по категории (домену)',
+        entities_search_placeholder: 'Поиск сущности...',
+        help: 'Эта настройка сохраняется для каждой категории отдельно в status_filters.',
+        remove: 'Удалить',
+        no_filters_selected: 'Фильтры не выбраны. Будут показаны все фильтры по умолчанию.',
+        no_domains_selected: 'Домены не выбраны. Будут показаны все домены.',
+        no_entities_selected: 'Сущности не выбраны. Фильтр применится ко всем сущностям этой категории.',
+        no_domains_found: 'Домены не найдены.',
+        no_entities_by_domain: 'Нет доступных сущностей по доменам.',
+        no_entities_found: 'Сущности не найдены.',
+        all: 'Все',
+        lights_on: 'Свет включен',
+        covers_open: 'Шторы открыты',
+        fans_on: 'Вентиляторы включены',
+        climates_on: 'Кондиционеры включены',
+        domain_light: 'Освещение',
+        domain_cover: 'Шторы',
+        domain_fan: 'Вентиляторы',
+        domain_climate: 'Кондиционеры',
+        domain_switch: 'Выключатели',
+        domain_media_player: 'Медиа',
+        domain_sensor: 'Датчики',
+        domain_binary_sensor: 'Бинарные датчики',
+        domain_lock: 'Замки',
+        domain_scene: 'Сцены',
+        domain_script: 'Скрипты',
+        domain_button: 'Кнопки',
+        domain_input_boolean: 'Логические входы',
+        domain_input_button: 'Кнопки ввода'
+      }
+    });
+
+    const t = (key) => {
+      const all = getStatusFilterUiTranslations();
+      const lang = getUiLanguage();
+      return all[lang]?.[key] || all.en?.[key] || all.he?.[key] || key;
+    };
+
+    const ensureStyles = () => {
+      try {
+        if (document.getElementById(STYLE_ID)) return;
+        const style = document.createElement('style');
+        style.id = STYLE_ID;
+        style.textContent = [
+          '#'+PANEL_ID+' .ysf-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }',
+          '#'+PANEL_ID+' .ysf-row.ysf-row-compact { margin-bottom: 8px; }',
+          '#'+PANEL_ID+' .ysf-row.ysf-row-compact .form-label { margin: 0; font-size: 0.75rem; }',
+          '#'+PANEL_ID+' .ysf-search { margin-bottom: 8px; }',
+          '#'+PANEL_ID+' .ysf-subtitle { font-size: 0.76rem; color: var(--text-secondary); margin: 8px 0 6px; }',
+          '#'+PANEL_ID+' .ysf-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; min-height: 26px; }',
+          '#'+PANEL_ID+' .ysf-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 8px; font-size: 0.75rem; background: rgba(255,255,255,0.08); color: var(--text-primary); }',
+          '#'+PANEL_ID+' .ysf-chip-remove { border: none; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 0.95rem; line-height: 1; padding: 0; }',
+          '#'+PANEL_ID+' .ysf-chip-remove:hover { color: var(--danger); }',
+          '#'+PANEL_ID+' .ysf-empty { color: var(--text-muted); font-size: 0.74rem; }',
+          '#'+PANEL_ID+' .ysf-list { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 10px; padding: 6px; display: flex; flex-direction: column; gap: 4px; }',
+          '#'+PANEL_ID+' .ysf-option { text-align: left; border: 1px solid transparent; border-radius: 8px; background: rgba(255,255,255,0.04); color: var(--text-primary); padding: 7px 9px; cursor: pointer; }',
+          '#'+PANEL_ID+' .ysf-option:hover { background: rgba(255,255,255,0.08); }',
+          '#'+PANEL_ID+' .ysf-option.selected { border-color: var(--accent); background: rgba(168,85,247,0.22); }',
+          '#'+PANEL_ID+' .ysf-option-name { font-size: 0.8rem; }',
+          '#'+PANEL_ID+' .ysf-option-id { font-size: 0.7rem; color: var(--text-muted); margin-top: 2px; }',
+          '#'+PANEL_ID+' .ysf-help { margin-top: 8px; color: var(--text-muted); font-size: 0.72rem; line-height: 1.45; }',
+          '#'+PANEL_ID+' .ysf-domain-quick { margin-bottom: 8px; }',
+          '#'+PANEL_ID+' .ysf-domain-quick-btn { border: 1px solid var(--border); border-radius: 999px; padding: 5px 10px; background: rgba(255,255,255,0.06); color: var(--text-primary); font-size: 0.75rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }',
+          '#'+PANEL_ID+' .ysf-domain-quick-btn:hover { background: rgba(255,255,255,0.1); }',
+          '#'+PANEL_ID+' .ysf-domain-quick-btn.selected { border-color: var(--accent); background: rgba(168,85,247,0.24); }',
+          '#'+PANEL_ID+' .ysf-domain-quick-btn.partial { border-color: rgba(168,85,247,0.5); background: rgba(168,85,247,0.14); }',
+          '#'+PANEL_ID+' .ysf-domain-quick-label { font-weight: 600; }',
+          '#'+PANEL_ID+' .ysf-domain-quick-meta { color: var(--text-muted); font-size: 0.7rem; }',
+          '.dynamic-item.ysf-filter-section .entities-list { display: none !important; }',
+          '.dynamic-item.ysf-filter-section .entities-list + .btn-add { display: none !important; }',
+          '.dynamic-item .ysf-filter-section-note { margin-top: 8px; margin-bottom: 6px; color: var(--text-muted); font-size: 0.74rem; line-height: 1.4; }'
+        ].join('\\n');
+        (document.head || document.body || document.documentElement).appendChild(style);
+      } catch (error) {}
+    };
+
+    const normalizeConfig = (raw) => {
+      const source = (raw && typeof raw === 'object') ? raw : {};
+      const entities = Array.isArray(source.entities)
+        ? source.entities.map(id => String(id || '').trim()).filter(Boolean)
+        : (typeof source.entities === 'string'
+          ? source.entities.split(',').map(id => String(id || '').trim()).filter(Boolean)
+          : []);
+      const domains = Array.isArray(source.domains)
+        ? source.domains.map(id => String(id || '').trim().toLowerCase()).filter(Boolean)
+        : (typeof source.domains === 'string'
+          ? source.domains.split(',').map(id => String(id || '').trim().toLowerCase()).filter(Boolean)
+          : []);
+      const visibleFilters = Array.isArray(source.visible_filters)
+        ? source.visible_filters.map(id => String(id || '').trim()).filter(Boolean)
+        : (typeof source.visible_filters === 'string'
+          ? source.visible_filters.split(',').map(id => String(id || '').trim()).filter(Boolean)
+          : []);
+      const sectionIds = Array.isArray(source.section_ids)
+        ? source.section_ids.map(id => String(id || '').trim()).filter(Boolean)
+        : (typeof source.section_ids === 'string'
+          ? source.section_ids.split(',').map(id => String(id || '').trim()).filter(Boolean)
+          : []);
+      return {
+        enabled: source.enabled === true,
+        entities: Array.from(new Set(entities)),
+        domains: Array.from(new Set(domains)),
+        visible_filters: Array.from(new Set(visibleFilters)),
+        section_ids: Array.from(new Set(sectionIds))
+      };
+    };
+
+    const getActiveCardConfig = () => {
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          return categories[activeCategoryIndex].config;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') return config;
+      } catch (error) {}
+      return null;
+    };
+
+    const STATUS_FILTERS_STORAGE_KEY = 'yangc_status_filters_by_category';
+
+    const getActiveCategoryPersistenceKey = () => {
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]) {
+          const category = categories[activeCategoryIndex];
+          const categoryId = String(category?.id || '').trim();
+          if (categoryId) return 'id:' + categoryId;
+          const categoryName = String(category?.name || '').trim().toLowerCase();
+          if (categoryName) return 'name:' + categoryName;
+        }
+      } catch (error) {}
+      return 'index:' + (Number(activeCategoryIndex) || 0);
+    };
+
+    const readPersistedStatusFiltersMap = () => {
+      try {
+        const raw = localStorage.getItem(STATUS_FILTERS_STORAGE_KEY);
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+      } catch (error) {}
+      return {};
+    };
+
+    const writePersistedStatusFiltersMap = (mapValue = {}) => {
+      try {
+        localStorage.setItem(STATUS_FILTERS_STORAGE_KEY, JSON.stringify(mapValue || {}));
+      } catch (error) {}
+    };
+
+    const persistStatusFiltersSnapshot = (statusFiltersConfig = null) => {
+      if (!statusFiltersConfig || typeof statusFiltersConfig !== 'object') return;
+      const key = getActiveCategoryPersistenceKey();
+      if (!key) return;
+      const normalized = normalizeConfig(statusFiltersConfig);
+      const mapValue = readPersistedStatusFiltersMap();
+      mapValue[key] = normalized;
+      writePersistedStatusFiltersMap(mapValue);
+    };
+
+    const loadPersistedStatusFiltersSnapshot = () => {
+      const key = getActiveCategoryPersistenceKey();
+      if (!key) return null;
+      const mapValue = readPersistedStatusFiltersMap();
+      const snapshot = mapValue[key];
+      if (!snapshot || typeof snapshot !== 'object') return null;
+      return normalizeConfig(snapshot);
+    };
+
+    const getEntityCatalog = () => {
+      try {
+        const list = Array.isArray(haConnection?.entities) ? haConnection.entities : [];
+        return list.map(entity => {
+          const entityId = String(entity?.entity_id || '').trim();
+          if (!entityId) return null;
+          const friendly = String(entity?.attributes?.friendly_name || '').trim();
+          const domain = entityId.includes('.') ? entityId.split('.')[0].toLowerCase() : '';
+          return { entityId, friendly, domain };
+        }).filter(Boolean);
+      } catch (error) {
+        return [];
+      }
+    };
+
+    const getSelectedSet = (panel) => {
+      const selected = Array.isArray(panel?.__ysfSelectedEntities) ? panel.__ysfSelectedEntities : [];
+      return new Set(selected.map(id => String(id || '').trim()).filter(Boolean));
+    };
+
+    const setSelectedFromList = (panel, entities = []) => {
+      panel.__ysfSelectedEntities = Array.from(new Set(
+        (Array.isArray(entities) ? entities : [])
+          .map(id => String(id || '').trim())
+          .filter(Boolean)
+      ));
+    };
+
+    const getSelectedDomainSet = (panel) => {
+      const selected = Array.isArray(panel?.__ysfSelectedDomains) ? panel.__ysfSelectedDomains : [];
+      return new Set(selected.map(id => String(id || '').trim().toLowerCase()).filter(Boolean));
+    };
+
+    const setSelectedDomainsFromList = (panel, domains = []) => {
+      panel.__ysfSelectedDomains = Array.from(new Set(
+        (Array.isArray(domains) ? domains : [])
+          .map(id => String(id || '').trim().toLowerCase())
+          .filter(Boolean)
+      ));
+    };
+
+    const getDomainLabel = (domain = '') => {
+      const labels = {
+        light: t('domain_light'),
+        cover: t('domain_cover'),
+        fan: t('domain_fan'),
+        climate: t('domain_climate'),
+        switch: t('domain_switch'),
+        media_player: t('domain_media_player'),
+        sensor: t('domain_sensor'),
+        binary_sensor: t('domain_binary_sensor'),
+        lock: t('domain_lock'),
+        scene: t('domain_scene'),
+        script: t('domain_script'),
+        button: t('domain_button'),
+        input_boolean: t('domain_input_boolean'),
+        input_button: t('domain_input_button')
+      };
+      return labels[domain] || String(domain || '').replace(/_/g, ' ');
+    };
+
+    const STATUS_FILTER_SECTION_TYPE = 'status_filter';
+
+    const isStatusFilterSectionType = (value = '') => (
+      String(value || '').trim().toLowerCase() === STATUS_FILTER_SECTION_TYPE
+    );
+
+    const getStatusFilterSectionSelects = () => Array.from(
+      document.querySelectorAll('.dynamic-item[data-section-id] .section-type')
+    );
+
+    const hasStatusFilterSectionInConfig = () => {
+      const cardConfig = getActiveCardConfig();
+      const sections = Array.isArray(cardConfig?.sections) ? cardConfig.sections : [];
+      return sections.some(section => isStatusFilterSectionConfig(section));
+    };
+
+    const hasStatusFilterSectionInEditorDom = () => (
+      getStatusFilterSectionSelects().some(selectEl => isStatusFilterSectionType(selectEl?.value))
+    );
+
+    const getStatusFilterSectionIdsFromDom = () => Array.from(new Set(
+      getStatusFilterSectionSelects()
+        .map(selectEl => {
+          if (!isStatusFilterSectionType(selectEl?.value)) return '';
+          const sectionEl = selectEl?.closest?.('.dynamic-item[data-section-id]');
+          return String(sectionEl?.dataset?.sectionId || '').trim();
+        })
+        .filter(Boolean)
+    ));
+
+    const getStatusFilterSectionIdsFromConfig = (sourceConfig = null) => {
+      const targetConfig = (sourceConfig && typeof sourceConfig === 'object')
+        ? sourceConfig
+        : getActiveCardConfig();
+      const sections = Array.isArray(targetConfig?.sections) ? targetConfig.sections : [];
+      return Array.from(new Set(
+        sections
+          .filter(section => isStatusFilterSectionConfig(section))
+          .map(section => String(section?.id || '').trim())
+          .filter(Boolean)
+      ));
+    };
+
+    const shouldShowStatusFiltersPanel = () => (
+      hasStatusFilterSectionInEditorDom() || hasStatusFilterSectionInConfig()
+    );
+
+    const getKnownStatusFilterDomains = () => ([
+      'air_quality',
+      'alarm_control_panel',
+      'automation',
+      'binary_sensor',
+      'button',
+      'calendar',
+      'camera',
+      'climate',
+      'cover',
+      'counter',
+      'device_tracker',
+      'event',
+      'fan',
+      'group',
+      'humidifier',
+      'input_boolean',
+      'input_button',
+      'input_datetime',
+      'input_number',
+      'input_select',
+      'input_text',
+      'light',
+      'lock',
+      'media_player',
+      'notify',
+      'number',
+      'person',
+      'remote',
+      'scene',
+      'script',
+      'select',
+      'sensor',
+      'siren',
+      'sun',
+      'switch',
+      'timer',
+      'update',
+      'vacuum',
+      'valve',
+      'weather',
+      'zone'
+    ]);
+
+    const getStatusFilterDomainPriority = (domain = '') => {
+      const order = [
+        'light',
+        'cover',
+        'climate',
+        'fan',
+        'switch',
+        'media_player',
+        'lock',
+        'sensor',
+        'binary_sensor'
+      ];
+      const index = order.indexOf(String(domain || '').trim().toLowerCase());
+      return index === -1 ? 999 : index;
+    };
+
+    const getEntityIdsForDomain = (domain = '', panel = null) => {
+      const normalizedDomain = String(domain || '').trim().toLowerCase();
+      if (!normalizedDomain) return [];
+      const selectedDomainsSet = getSelectedDomainSet(panel || ensurePanel());
+      const catalog = getEntityCatalog();
+      const ids = catalog
+        .filter(item => {
+          if (String(item.domain || '').trim().toLowerCase() !== normalizedDomain) return false;
+          if (selectedDomainsSet.size && !selectedDomainsSet.has(normalizedDomain)) return false;
+          return true;
+        })
+        .map(item => String(item.entityId || '').trim())
+        .filter(Boolean);
+      return Array.from(new Set(ids));
+    };
+
+    const getFilterOptions = () => ([
+      { key: 'all', label: t('all') },
+      { key: 'lights_on', label: t('lights_on') },
+      { key: 'covers_open', label: t('covers_open') },
+      { key: 'fans_on', label: t('fans_on') },
+      { key: 'climates_on', label: t('climates_on') }
+    ]);
+
+    const getSelectedFilterSet = (panel) => {
+      const selected = Array.isArray(panel?.__ysfSelectedFilters) ? panel.__ysfSelectedFilters : [];
+      return new Set(selected.map(id => String(id || '').trim()).filter(Boolean));
+    };
+
+    const setSelectedFiltersFromList = (panel, filterKeys = []) => {
+      const allowed = new Set(getFilterOptions().map(item => item.key));
+      const next = (Array.isArray(filterKeys) ? filterKeys : [])
+        .map(key => String(key || '').trim())
+        .filter(key => allowed.has(key));
+      panel.__ysfSelectedFilters = Array.from(new Set(next));
+    };
+
+    const ensurePanel = () => {
+      const existing = document.getElementById(PANEL_ID);
+      if (existing) return existing;
+      const configTab = document.getElementById('tab-config');
+      if (!configTab) return null;
+      const panel = document.createElement('div');
+      panel.id = PANEL_ID;
+      panel.className = 'form-section';
+      panel.innerHTML = [
+        '<div class="form-section-title"><i class="mdi mdi-filter-outline"></i>'+escapeHtml(t('panel_title'))+'</div>',
+        '<div class="ysf-row">',
+        '  <label class="form-label" for="ysfEnabled" style="margin: 0;">'+escapeHtml(t('enable_label'))+'</label>',
+        '  <input id="ysfEnabled" type="checkbox" />',
+        '</div>',
+        '<div class="form-group">',
+        '  <div class="ysf-subtitle" data-ysf-subtitle="visible-filters">'+escapeHtml(t('visible_filters_title'))+'</div>',
+        '  <div id="ysfFilterChips" class="ysf-chips"></div>',
+        '  <div id="ysfFilterList" class="ysf-list"></div>',
+        '</div>',
+        '<div class="form-group">',
+        '  <div class="ysf-subtitle" data-ysf-subtitle="domains">'+escapeHtml(t('domains_title'))+'</div>',
+        '  <div class="ysf-row ysf-row-compact">',
+        '    <label class="form-label" for="ysfShowAllDomains">'+escapeHtml(t('domains_show_all'))+'</label>',
+        '    <input id="ysfShowAllDomains" type="checkbox" />',
+        '  </div>',
+        '  <div id="ysfDomainsChips" class="ysf-chips"></div>',
+        '  <div id="ysfDomainsList" class="ysf-list"></div>',
+        '</div>',
+        '<div class="form-group">',
+        '  <div class="ysf-subtitle" data-ysf-subtitle="entities-domain-quick">'+escapeHtml(t('entities_domain_quick_title'))+'</div>',
+        '  <div id="ysfEntitiesDomainQuick" class="ysf-chips ysf-domain-quick"></div>',
+        '  <label class="form-label" for="ysfEntitySearch">'+escapeHtml(t('entities_label'))+'</label>',
+        '  <input id="ysfEntitySearch" class="form-input ysf-search" type="text" placeholder="'+escapeHtml(t('entities_search_placeholder'))+'" />',
+        '  <div id="ysfEntitiesChips" class="ysf-chips"></div>',
+        '  <div id="ysfEntitiesList" class="ysf-list"></div>',
+        '</div>',
+        '<div class="ysf-help">'+escapeHtml(t('help'))+'</div>'
+      ].join('');
+      configTab.appendChild(panel);
+      return panel;
+    };
+
+    const ensureStatusFilterSectionTypeOption = (selectEl) => {
+      if (!selectEl || !(selectEl instanceof HTMLSelectElement)) return;
+      const existing = Array.from(selectEl.options || []).find(option =>
+        isStatusFilterSectionType(option?.value)
+      );
+      if (existing) {
+        existing.textContent = t('section_type_filter');
+        return;
+      }
+      const option = document.createElement('option');
+      option.value = STATUS_FILTER_SECTION_TYPE;
+      option.textContent = t('section_type_filter');
+      selectEl.appendChild(option);
+    };
+
+    let ysfQuickActionsSyncGuard = false;
+    const syncQuickActionsUiState = () => {
+      const hasFilterSection = hasStatusFilterSectionInEditorDom() || hasStatusFilterSectionInConfig();
+      const quickActionsSection = document.getElementById('quickActionsSection');
+      if (quickActionsSection) {
+        quickActionsSection.style.display = hasFilterSection ? 'none' : '';
+      }
+      if (!hasFilterSection) return false;
+
+      const disableAutomationsOnConfig = (targetCardConfig) => {
+        if (!targetCardConfig || typeof targetCardConfig !== 'object') return false;
+        const source = targetCardConfig.automations && typeof targetCardConfig.automations === 'object'
+          ? targetCardConfig.automations
+          : {};
+        if (source.enabled === false) return false;
+        targetCardConfig.automations = {
+          ...source,
+          enabled: false
+        };
+        return true;
+      };
+
+      const enableAutomationsCheckbox = document.getElementById('enableAutomations');
+      if (enableAutomationsCheckbox) {
+        enableAutomationsCheckbox.checked = false;
+      }
+
+      let changed = false;
+      changed = disableAutomationsOnConfig(getActiveCardConfig()) || changed;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config) {
+          changed = disableAutomationsOnConfig(categories[activeCategoryIndex].config) || changed;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          changed = disableAutomationsOnConfig(config) || changed;
+        }
+      } catch (error) {}
+      if (changed && !ysfQuickActionsSyncGuard) {
+        ysfQuickActionsSyncGuard = true;
+        setTimeout(() => {
+          try {
+            if (typeof window.updateConfig === 'function') {
+              window.updateConfig();
+            } else {
+              emitConfig();
+            }
+          } catch (error) {}
+          setTimeout(() => { ysfQuickActionsSyncGuard = false; }, 80);
+        }, 0);
+      }
+      return changed;
+    };
+
+    const applyStatusFilterSectionUiState = (sectionEl) => {
+      if (!sectionEl) return false;
+      const selectEl = sectionEl.querySelector('.section-type');
+      if (!selectEl) return false;
+      ensureStatusFilterSectionTypeOption(selectEl);
+      const isFilterSection = isStatusFilterSectionType(selectEl.value);
+      sectionEl.classList.toggle('ysf-filter-section', isFilterSection);
+
+      const sectionIconInput = sectionEl.querySelector('.section-icon');
+      const sectionIconGroup = sectionIconInput?.closest?.('.form-group');
+      if (sectionIconGroup) {
+        sectionIconGroup.style.display = isFilterSection ? 'none' : '';
+      }
+      if (isFilterSection) {
+        sectionIconGroup?.querySelector?.('.icon-dropdown')?.classList?.remove?.('show');
+      }
+
+      const entitiesList = sectionEl.querySelector('.entities-list');
+      const entitiesGroup = entitiesList?.closest?.('.form-group');
+      if (entitiesGroup) {
+        entitiesGroup.style.display = isFilterSection ? 'none' : '';
+      }
+      if (isFilterSection && entitiesList && entitiesList.children.length) {
+        entitiesList.innerHTML = '';
+      }
+
+      let noteEl = sectionEl.querySelector('.ysf-filter-section-note');
+      if (!noteEl) {
+        noteEl = document.createElement('div');
+        noteEl.className = 'ysf-filter-section-note';
+        const container = entitiesList?.parentElement || sectionEl.querySelector('.section-body') || sectionEl;
+        if (container && container.appendChild) {
+          container.appendChild(noteEl);
+        }
+      }
+      if (noteEl) {
+        noteEl.textContent = t('section_type_filter_note');
+        noteEl.style.display = isFilterSection ? '' : 'none';
+      }
+      syncQuickActionsUiState();
+      return isFilterSection;
+    };
+
+    const decorateStatusFilterSectionTypeSelects = () => {
+      const cardConfig = getActiveCardConfig();
+      const cardSections = Array.isArray(cardConfig?.sections) ? cardConfig.sections : [];
+      const sectionEls = Array.from(document.querySelectorAll('.dynamic-item[data-section-id]'));
+      sectionEls.forEach((sectionEl, sectionIndex) => {
+        const selectEl = sectionEl?.querySelector?.('.section-type');
+        if (!selectEl || !(selectEl instanceof HTMLSelectElement)) return;
+        ensureStatusFilterSectionTypeOption(selectEl);
+
+        const sectionId = String(sectionEl?.dataset?.sectionId || '').trim();
+        let targetSectionType = '';
+        if (sectionId) {
+          const matchedById = cardSections.find(section => String(section?.id || '').trim() === sectionId);
+          if (matchedById) {
+            targetSectionType = isStatusFilterSectionConfig(matchedById)
+              ? STATUS_FILTER_SECTION_TYPE
+              : String(matchedById?.type || '').trim().toLowerCase();
+          }
+        }
+        if (!targetSectionType && cardSections[sectionIndex]) {
+          targetSectionType = isStatusFilterSectionConfig(cardSections[sectionIndex])
+            ? STATUS_FILTER_SECTION_TYPE
+            : String(cardSections[sectionIndex]?.type || '').trim().toLowerCase();
+        }
+
+        if (isStatusFilterSectionType(targetSectionType) && selectEl.value !== STATUS_FILTER_SECTION_TYPE) {
+          selectEl.value = STATUS_FILTER_SECTION_TYPE;
+        }
+
+        applyStatusFilterSectionUiState(sectionEl);
+        if (selectEl.__ysfFilterSectionChangeBound) return;
+        selectEl.__ysfFilterSectionChangeBound = true;
+        selectEl.addEventListener('change', () => {
+          if (sectionEl) {
+            const isFilterSection = applyStatusFilterSectionUiState(sectionEl);
+            if (isFilterSection && typeof window.updateConfig === 'function') {
+              window.updateConfig();
+              setTimeout(emitConfig, 0);
+            }
+          }
+          const shouldShow = syncStatusFiltersPanelVisibility();
+          syncQuickActionsUiState();
+          if (shouldShow) {
+            setTimeout(() => syncUiFromConfig(), 0);
+          }
+        });
+      });
+    };
+
+    const syncStatusFiltersPanelVisibility = () => {
+      const panel = ensurePanel();
+      if (!panel) return false;
+      const shouldShow = shouldShowStatusFiltersPanel();
+      panel.style.display = shouldShow ? '' : 'none';
+      panel.dataset.ysfVisible = shouldShow ? '1' : '0';
+      syncQuickActionsUiState();
+      return shouldShow;
+    };
+
+    const syncStatusFilterSectionsToCurrentConfig = () => {
+      const sectionEls = Array.from(document.querySelectorAll('.dynamic-item[data-section-id]'));
+      if (!sectionEls.length) return false;
+
+      const typeById = new Map();
+      const typeByIndex = new Map();
+      const supportsStatusFilterById = new Map();
+      const supportsStatusFilterByIndex = new Map();
+      sectionEls.forEach((sectionEl, sectionIndex) => {
+        const selectEl = sectionEl?.querySelector?.('.section-type');
+        const normalizedType = String(selectEl?.value || '').trim().toLowerCase() || 'toggle';
+        const supportsStatusFilter = Array.from(selectEl?.options || []).some(option =>
+          isStatusFilterSectionType(option?.value)
+        );
+        typeByIndex.set(sectionIndex, normalizedType);
+        supportsStatusFilterByIndex.set(sectionIndex, supportsStatusFilter);
+        const sectionId = String(sectionEl?.dataset?.sectionId || '').trim();
+        if (sectionId) {
+          typeById.set(sectionId, normalizedType);
+          supportsStatusFilterById.set(sectionId, supportsStatusFilter);
+        }
+      });
+
+      const applyToCardConfig = (targetCardConfig) => {
+        if (!targetCardConfig || typeof targetCardConfig !== 'object') return false;
+        const sections = Array.isArray(targetCardConfig.sections) ? targetCardConfig.sections : [];
+        if (!sections.length) return false;
+        let changed = false;
+        const normalizedStatusFilters = normalizeConfig(targetCardConfig.status_filters);
+        const persistedStatusFilterSectionIds = new Set(
+          normalizedStatusFilters.section_ids
+            .map(id => String(id || '').trim())
+            .filter(Boolean)
+        );
+        const statusFilterSectionIds = new Set();
+        sections.forEach((section, sectionIndex) => {
+          if (!section || typeof section !== 'object') return;
+          const sectionId = String(section?.id || '').trim();
+          const typeFromDom = (sectionId && typeById.has(sectionId))
+            ? typeById.get(sectionId)
+            : typeByIndex.get(sectionIndex);
+          const domSupportsStatusFilter = (sectionId && supportsStatusFilterById.has(sectionId))
+            ? supportsStatusFilterById.get(sectionId) === true
+            : (supportsStatusFilterByIndex.get(sectionIndex) === true);
+          const shouldPreserveStatusFilter = isStatusFilterSectionConfig(section)
+            || (sectionId && persistedStatusFilterSectionIds.has(sectionId));
+          if (typeFromDom === STATUS_FILTER_SECTION_TYPE) {
+            if (sectionId) statusFilterSectionIds.add(sectionId);
+            if (!isStatusFilterSectionType(section?.type)) {
+              section.type = STATUS_FILTER_SECTION_TYPE;
+              changed = true;
+            }
+            if (section?.[STATUS_FILTER_SECTION_FLAG] !== true) {
+              section[STATUS_FILTER_SECTION_FLAG] = true;
+              changed = true;
+            }
+            if (!Array.isArray(section.entities) || section.entities.length) {
+              section.entities = [];
+              changed = true;
+            }
+            return;
+          }
+          if (typeFromDom) {
+            if (shouldPreserveStatusFilter && !domSupportsStatusFilter) {
+              if (sectionId) statusFilterSectionIds.add(sectionId);
+              if (!isStatusFilterSectionType(section?.type)) {
+                section.type = STATUS_FILTER_SECTION_TYPE;
+                changed = true;
+              }
+              if (section?.[STATUS_FILTER_SECTION_FLAG] !== true) {
+                section[STATUS_FILTER_SECTION_FLAG] = true;
+                changed = true;
+              }
+              if (!Array.isArray(section.entities) || section.entities.length) {
+                section.entities = [];
+                changed = true;
+              }
+              return;
+            }
+            if (section?.[STATUS_FILTER_SECTION_FLAG] === true) {
+              delete section[STATUS_FILTER_SECTION_FLAG];
+              changed = true;
+            }
+            if (isStatusFilterSectionType(section?.type)) {
+              section.type = 'toggle';
+              changed = true;
+            }
+            return;
+          }
+          if (shouldPreserveStatusFilter) {
+            if (sectionId) statusFilterSectionIds.add(sectionId);
+            if (!isStatusFilterSectionType(section?.type)) {
+              section.type = STATUS_FILTER_SECTION_TYPE;
+              changed = true;
+            }
+            if (section?.[STATUS_FILTER_SECTION_FLAG] !== true) {
+              section[STATUS_FILTER_SECTION_FLAG] = true;
+              changed = true;
+            }
+            if (!Array.isArray(section.entities) || section.entities.length) {
+              section.entities = [];
+              changed = true;
+            }
+          }
+        });
+        const currentSectionIds = Array.isArray(normalizedStatusFilters.section_ids)
+          ? Array.from(new Set(normalizedStatusFilters.section_ids.map(id => String(id || '').trim()).filter(Boolean)))
+          : [];
+        const nextSectionIds = Array.from(statusFilterSectionIds);
+        const currentIdSet = new Set(currentSectionIds);
+        const idsChanged = currentSectionIds.length !== nextSectionIds.length
+          || nextSectionIds.some(id => !currentIdSet.has(id));
+        if (idsChanged) {
+          targetCardConfig.status_filters = {
+            ...normalizedStatusFilters,
+            section_ids: nextSectionIds
+          };
+          changed = true;
+        } else if (!targetCardConfig.status_filters || typeof targetCardConfig.status_filters !== 'object') {
+          targetCardConfig.status_filters = {
+            ...normalizedStatusFilters,
+            section_ids: nextSectionIds
+          };
+          changed = true;
+        }
+        return changed;
+      };
+
+      let changed = false;
+      changed = applyToCardConfig(getActiveCardConfig()) || changed;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config) {
+          changed = applyToCardConfig(categories[activeCategoryIndex].config) || changed;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          changed = applyToCardConfig(config) || changed;
+        }
+      } catch (error) {}
+      return changed;
+    };
+
+    const refreshPanelTexts = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      const titleEl = panel.querySelector('.form-section-title');
+      const enableLabelEl = panel.querySelector('label[for="ysfEnabled"]');
+      const visibleFiltersSubtitleEl = panel.querySelector('.ysf-subtitle[data-ysf-subtitle="visible-filters"]');
+      const domainsSubtitleEl = panel.querySelector('.ysf-subtitle[data-ysf-subtitle="domains"]');
+      const showAllDomainsLabelEl = panel.querySelector('label[for="ysfShowAllDomains"]');
+      const entitiesDomainQuickSubtitleEl = panel.querySelector('.ysf-subtitle[data-ysf-subtitle="entities-domain-quick"]');
+      const entitiesLabelEl = panel.querySelector('label[for="ysfEntitySearch"]');
+      const searchInput = panel.querySelector('#ysfEntitySearch');
+      const helpEl = panel.querySelector('.ysf-help');
+
+      if (titleEl) titleEl.innerHTML = '<i class="mdi mdi-filter-outline"></i>' + escapeHtml(t('panel_title'));
+      if (enableLabelEl) enableLabelEl.textContent = t('enable_label');
+      if (visibleFiltersSubtitleEl) visibleFiltersSubtitleEl.textContent = t('visible_filters_title');
+      if (domainsSubtitleEl) domainsSubtitleEl.textContent = t('domains_title');
+      if (showAllDomainsLabelEl) showAllDomainsLabelEl.textContent = t('domains_show_all');
+      if (entitiesDomainQuickSubtitleEl) entitiesDomainQuickSubtitleEl.textContent = t('entities_domain_quick_title');
+      if (entitiesLabelEl) entitiesLabelEl.textContent = t('entities_label');
+      if (searchInput) searchInput.setAttribute('placeholder', t('entities_search_placeholder'));
+      if (helpEl) helpEl.textContent = t('help');
+      decorateStatusFilterSectionTypeSelects();
+      syncStatusFiltersPanelVisibility();
+    };
+
+    const renderEntityDomainQuickUi = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      const quickWrap = panel.querySelector('#ysfEntitiesDomainQuick');
+      if (!quickWrap) return;
+
+      const selectedSet = getSelectedSet(panel);
+      const selectedDomainsSet = getSelectedDomainSet(panel);
+      const catalog = getEntityCatalog();
+      const domainEntityMap = new Map();
+
+      catalog.forEach(item => {
+        const domain = String(item.domain || '').trim().toLowerCase();
+        const entityId = String(item.entityId || '').trim();
+        if (!domain || !entityId) return;
+        if (selectedDomainsSet.size && !selectedDomainsSet.has(domain)) return;
+        if (!domainEntityMap.has(domain)) domainEntityMap.set(domain, []);
+        domainEntityMap.get(domain).push(entityId);
+      });
+
+      Array.from(selectedSet).forEach(entityId => {
+        const normalizedEntityId = String(entityId || '').trim();
+        if (!normalizedEntityId.includes('.')) return;
+        const domain = normalizedEntityId.split('.')[0].toLowerCase();
+        if (!domain) return;
+        if (selectedDomainsSet.size && !selectedDomainsSet.has(domain)) return;
+        if (!domainEntityMap.has(domain)) domainEntityMap.set(domain, []);
+        domainEntityMap.get(domain).push(normalizedEntityId);
+      });
+
+      const domains = Array.from(domainEntityMap.keys()).sort((a, b) => {
+        const aPriority = getStatusFilterDomainPriority(a);
+        const bPriority = getStatusFilterDomainPriority(b);
+        if (aPriority !== bPriority) return aPriority - bPriority;
+        return a.localeCompare(b);
+      });
+
+      if (!domains.length) {
+        quickWrap.innerHTML = '<span class="ysf-empty">'+escapeHtml(t('no_entities_by_domain'))+'</span>';
+        return;
+      }
+
+      quickWrap.innerHTML = domains.map(domain => {
+        const entityIds = Array.from(new Set(domainEntityMap.get(domain) || []));
+        const total = entityIds.length;
+        const selectedCount = entityIds.reduce((count, entityId) => count + (selectedSet.has(entityId) ? 1 : 0), 0);
+        const allSelected = total > 0 && selectedCount === total;
+        const partiallySelected = selectedCount > 0 && selectedCount < total;
+        const cssStateClass = allSelected ? ' selected' : (partiallySelected ? ' partial' : '');
+        return [
+          '<button type="button" class="ysf-domain-quick-btn'+cssStateClass+'" data-entity-domain-quick="'+escapeHtml(domain)+'">',
+          '  <span class="ysf-domain-quick-label">'+escapeHtml(getDomainLabel(domain))+'</span>',
+          '  <span class="ysf-domain-quick-meta">'+selectedCount+'/'+total+'</span>',
+          '</button>'
+        ].join('');
+      }).join('');
+    };
+
+    const renderEntitiesUi = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      const searchInput = panel.querySelector('#ysfEntitySearch');
+      const chipsWrap = panel.querySelector('#ysfEntitiesChips');
+      const listWrap = panel.querySelector('#ysfEntitiesList');
+      if (!searchInput || !chipsWrap || !listWrap) return;
+
+      const query = String(searchInput.value || '').trim().toLowerCase();
+      const selectedSet = getSelectedSet(panel);
+      const selectedDomainsSet = getSelectedDomainSet(panel);
+      const selectedList = Array.from(selectedSet);
+      const catalog = getEntityCatalog();
+      const optionMap = new Map();
+      catalog.forEach(item => {
+        if (selectedDomainsSet.size && !selectedDomainsSet.has(item.domain)) return;
+        optionMap.set(item.entityId, item);
+      });
+      selectedList.forEach(entityId => {
+        if (!optionMap.has(entityId)) optionMap.set(entityId, { entityId, friendly: '', domain: '' });
+      });
+
+      const allOptions = Array.from(optionMap.values()).sort((a, b) => {
+        const aName = (a.friendly || a.entityId || '').toLowerCase();
+        const bName = (b.friendly || b.entityId || '').toLowerCase();
+        return aName.localeCompare(bName);
+      });
+      const filtered = allOptions.filter(item => {
+        if (selectedSet.has(item.entityId)) return true;
+        if (!query) return true;
+        const haystack = (item.entityId + ' ' + item.friendly).toLowerCase();
+        return haystack.includes(query);
+      });
+
+      chipsWrap.innerHTML = selectedList.length
+        ? selectedList.map(entityId => {
+          const item = optionMap.get(entityId) || { entityId, friendly: '' };
+          const chipLabel = item.friendly || entityId;
+          return [
+            '<span class="ysf-chip" data-entity-id="'+escapeHtml(entityId)+'">',
+            '  <span>'+escapeHtml(chipLabel)+'</span>',
+            '  <button type="button" class="ysf-chip-remove" data-remove-entity-id="'+escapeHtml(entityId)+'" title="'+escapeHtml(t('remove'))+'">&times;</button>',
+            '</span>'
+          ].join('');
+        }).join('')
+        : '<span class="ysf-empty">'+escapeHtml(t('no_entities_selected'))+'</span>';
+
+      listWrap.innerHTML = filtered.length
+        ? filtered.map(item => {
+          const selected = selectedSet.has(item.entityId);
+          const label = item.friendly || item.entityId;
+          return [
+            '<button type="button" class="ysf-option'+(selected ? ' selected' : '')+'" data-entity-id="'+escapeHtml(item.entityId)+'">',
+            '  <div class="ysf-option-name">'+escapeHtml(label)+'</div>',
+            '  <div class="ysf-option-id">'+escapeHtml(item.entityId)+'</div>',
+          '</button>'
+        ].join('');
+      }).join('')
+        : '<div class="ysf-empty">'+escapeHtml(t('no_entities_found'))+'</div>';
+
+      renderEntityDomainQuickUi();
+    };
+
+    const renderDomainsUi = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      const chipsWrap = panel.querySelector('#ysfDomainsChips');
+      const listWrap = panel.querySelector('#ysfDomainsList');
+      const showAllDomainsCheckbox = panel.querySelector('#ysfShowAllDomains');
+      if (!chipsWrap || !listWrap) return;
+      const showAllDomains = showAllDomainsCheckbox?.checked === true;
+
+      const selectedSet = getSelectedDomainSet(panel);
+      const catalog = getEntityCatalog();
+      const domainMap = new Map();
+      catalog.forEach(item => {
+        const domain = String(item.domain || '').trim().toLowerCase();
+        if (!domain) return;
+        domainMap.set(domain, (domainMap.get(domain) || 0) + 1);
+      });
+      if (showAllDomains) {
+        getKnownStatusFilterDomains().forEach(domain => {
+          const normalizedDomain = String(domain || '').trim().toLowerCase();
+          if (!normalizedDomain) return;
+          if (!domainMap.has(normalizedDomain)) {
+            domainMap.set(normalizedDomain, 0);
+          }
+        });
+      }
+      Array.from(selectedSet).forEach(domain => {
+        if (!domainMap.has(domain)) domainMap.set(domain, 0);
+      });
+      const allDomains = Array.from(domainMap.keys())
+        .filter(domain => showAllDomains || (domainMap.get(domain) || 0) > 0 || selectedSet.has(domain))
+        .sort((a, b) => {
+          const aPriority = getStatusFilterDomainPriority(a);
+          const bPriority = getStatusFilterDomainPriority(b);
+          if (aPriority !== bPriority) return aPriority - bPriority;
+          return a.localeCompare(b);
+        });
+
+      chipsWrap.innerHTML = selectedSet.size
+        ? Array.from(selectedSet).sort((a, b) => a.localeCompare(b)).map(domain => [
+          '<span class="ysf-chip" data-domain="'+escapeHtml(domain)+'">',
+          '  <span>'+escapeHtml(getDomainLabel(domain))+'</span>',
+          '  <button type="button" class="ysf-chip-remove" data-remove-domain="'+escapeHtml(domain)+'" title="'+escapeHtml(t('remove'))+'">&times;</button>',
+          '</span>'
+        ].join('')).join('')
+        : '<span class="ysf-empty">'+escapeHtml(t('no_domains_selected'))+'</span>';
+
+      listWrap.innerHTML = allDomains.length
+        ? allDomains.map(domain => {
+          const selected = selectedSet.has(domain);
+          const count = domainMap.get(domain) || 0;
+          return [
+            '<button type="button" class="ysf-option'+(selected ? ' selected' : '')+'" data-domain="'+escapeHtml(domain)+'">',
+            '  <div class="ysf-option-name">'+escapeHtml(getDomainLabel(domain))+'</div>',
+            '  <div class="ysf-option-id">'+escapeHtml(domain)+' ('+count+')</div>',
+            '</button>'
+          ].join('');
+        }).join('')
+        : '<div class="ysf-empty">'+escapeHtml(t('no_domains_found'))+'</div>';
+    };
+
+    const renderFiltersUi = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      const chipsWrap = panel.querySelector('#ysfFilterChips');
+      const listWrap = panel.querySelector('#ysfFilterList');
+      if (!chipsWrap || !listWrap) return;
+
+      const options = getFilterOptions();
+      const selectedSet = getSelectedFilterSet(panel);
+      const selectedList = options.filter(item => selectedSet.has(item.key));
+
+      chipsWrap.innerHTML = selectedList.length
+        ? selectedList.map(item => [
+          '<span class="ysf-chip" data-filter-key="'+escapeHtml(item.key)+'">',
+          '  <span>'+escapeHtml(item.label)+'</span>',
+          '  <button type="button" class="ysf-chip-remove" data-remove-filter-key="'+escapeHtml(item.key)+'" title="'+escapeHtml(t('remove'))+'">&times;</button>',
+          '</span>'
+        ].join('')).join('')
+        : '<span class="ysf-empty">'+escapeHtml(t('no_filters_selected'))+'</span>';
+
+      listWrap.innerHTML = options.map(item => {
+        const selected = selectedSet.has(item.key);
+        return [
+          '<button type="button" class="ysf-option'+(selected ? ' selected' : '')+'" data-filter-key="'+escapeHtml(item.key)+'">',
+          '  <div class="ysf-option-name">'+escapeHtml(item.label)+'</div>',
+          '  <div class="ysf-option-id">'+escapeHtml(item.key)+'</div>',
+          '</button>'
+        ].join('');
+      }).join('');
+    };
+
+    const applyUiToConfig = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      if (panel.__ysfPanelReady !== true) return;
+      if (panel.__ysfSyncingFromConfig === true) return;
+      const enabledCheckbox = panel.querySelector('#ysfEnabled');
+      if (!enabledCheckbox) return;
+      const cardConfig = getActiveCardConfig();
+      if (!cardConfig || typeof cardConfig !== 'object') return;
+
+      const selectedEntities = Array.from(getSelectedSet(panel));
+      const selectedDomains = Array.from(getSelectedDomainSet(panel));
+      const selectedVisibleFilters = Array.from(getSelectedFilterSet(panel));
+      const sectionIdsFromDom = getStatusFilterSectionIdsFromDom();
+      const sectionIdsFromConfig = getStatusFilterSectionIdsFromConfig(cardConfig);
+      const nextConfig = {
+        enabled: enabledCheckbox.checked === true,
+        entities: selectedEntities,
+        domains: selectedDomains,
+        visible_filters: selectedVisibleFilters,
+        section_ids: sectionIdsFromDom.length ? sectionIdsFromDom : sectionIdsFromConfig
+      };
+
+      cardConfig.status_filters = nextConfig;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          categories[activeCategoryIndex].config.status_filters = { ...nextConfig };
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          config.status_filters = { ...nextConfig };
+        }
+      } catch (error) {}
+      persistStatusFiltersSnapshot(nextConfig);
+      panel.__ysfLastStableStatusFilters = normalizeConfig(nextConfig);
+    };
+
+    const applyStatusFiltersToCurrentConfig = (statusFiltersConfig = null) => {
+      const normalized = normalizeConfig(statusFiltersConfig);
+      const cardConfig = getActiveCardConfig();
+      if (!cardConfig || typeof cardConfig !== 'object') return normalized;
+      cardConfig.status_filters = { ...normalized };
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          categories[activeCategoryIndex].config.status_filters = { ...normalized };
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          config.status_filters = { ...normalized };
+        }
+      } catch (error) {}
+      return normalized;
+    };
+
+    const getStatusFiltersSnapshotFromUi = (panel) => {
+      const sourcePanel = panel || ensurePanel();
+      if (!sourcePanel) return null;
+      const enabledCheckbox = sourcePanel.querySelector('#ysfEnabled');
+      return normalizeConfig({
+        enabled: enabledCheckbox?.checked === true,
+        entities: Array.from(getSelectedSet(sourcePanel)),
+        domains: Array.from(getSelectedDomainSet(sourcePanel)),
+        visible_filters: Array.from(getSelectedFilterSet(sourcePanel)),
+        section_ids: (() => {
+          const fromDom = getStatusFilterSectionIdsFromDom();
+          if (fromDom.length) return fromDom;
+          const fromConfig = getStatusFilterSectionIdsFromConfig();
+          return fromConfig;
+        })()
+      });
+    };
+
+    const applyCardLanguageToConfig = (langValue = '') => {
+      const normalizedLang = String(langValue || '').trim().toLowerCase().split(/[-_]/)[0];
+      const safeLang = normalizedLang === 'iw' ? 'he' : (normalizedLang || '');
+      if (!safeLang) return;
+      const cardConfig = getActiveCardConfig();
+      if (!cardConfig || typeof cardConfig !== 'object') return;
+      cardConfig.language = safeLang;
+      try {
+        if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+          categories[activeCategoryIndex].config.language = safeLang;
+        }
+      } catch (error) {}
+      try {
+        if (config && typeof config === 'object') {
+          config.language = safeLang;
+        }
+      } catch (error) {}
+    };
+
+    const isStatusFiltersEmpty = (statusFiltersConfig = null) => {
+      const normalized = normalizeConfig(statusFiltersConfig);
+      return normalized.enabled !== true
+        && !normalized.entities.length
+        && !normalized.domains.length
+        && !normalized.visible_filters.length;
+    };
+    let ysfSyncSuspendUntil = 0;
+
+    const syncUiFromConfig = () => {
+      const panel = ensurePanel();
+      if (!panel) return;
+      decorateStatusFilterSectionTypeSelects();
+      const isPanelVisible = syncStatusFiltersPanelVisibility();
+      refreshPanelTexts();
+      if (!isPanelVisible) return;
+      const enabledCheckbox = panel.querySelector('#ysfEnabled');
+      if (!enabledCheckbox) return;
+      panel.__ysfSyncingFromConfig = true;
+      try {
+        if (Date.now() < ysfSyncSuspendUntil) {
+          renderFiltersUi();
+          renderDomainsUi();
+          renderEntitiesUi();
+          return;
+        }
+        const cardConfig = getActiveCardConfig() || {};
+        const configStatusFilters = normalizeConfig(cardConfig.status_filters);
+        const persistedStatusFilters = normalizeConfig(loadPersistedStatusFiltersSnapshot());
+        const lockUntil = Number(panel.__ysfLanguageSwitchLockUntil) || 0;
+        const preservedDuringLanguageSwitch = lockUntil > Date.now()
+          ? normalizeConfig(panel.__ysfPreservedStatusFilters)
+          : null;
+        let statusFilters = configStatusFilters;
+        if (preservedDuringLanguageSwitch && !isStatusFiltersEmpty(preservedDuringLanguageSwitch)) {
+          statusFilters = preservedDuringLanguageSwitch;
+        } else if (isStatusFiltersEmpty(statusFilters) && !isStatusFiltersEmpty(persistedStatusFilters)) {
+          statusFilters = persistedStatusFilters;
+        }
+        const sectionIdsFromConfig = getStatusFilterSectionIdsFromConfig(cardConfig);
+        statusFilters = normalizeConfig({
+          ...statusFilters,
+          section_ids: sectionIdsFromConfig
+        });
+
+        cardConfig.status_filters = { ...statusFilters };
+        try {
+          if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object') {
+            categories[activeCategoryIndex].config.status_filters = { ...statusFilters };
+          }
+        } catch (error) {}
+        try {
+          if (config && typeof config === 'object') {
+            config.status_filters = { ...statusFilters };
+          }
+        } catch (error) {}
+        panel.__ysfLastStableStatusFilters = normalizeConfig(statusFilters);
+        panel.__ysfPanelReady = true;
+        enabledCheckbox.checked = statusFilters.enabled === true;
+        setSelectedFiltersFromList(panel, statusFilters.visible_filters);
+        setSelectedDomainsFromList(panel, statusFilters.domains);
+        setSelectedFromList(panel, statusFilters.entities);
+        renderFiltersUi();
+        renderDomainsUi();
+        renderEntitiesUi();
+      } finally {
+        panel.__ysfSyncingFromConfig = false;
+      }
+    };
+
+    const installEvents = () => {
+      const panel = ensurePanel();
+      if (!panel || panel.__yangcStatusFiltersEventsInstalled) return;
+      const enabledCheckbox = panel.querySelector('#ysfEnabled');
+      const searchInput = panel.querySelector('#ysfEntitySearch');
+      const filterChipsWrap = panel.querySelector('#ysfFilterChips');
+      const filterListWrap = panel.querySelector('#ysfFilterList');
+      const domainsChipsWrap = panel.querySelector('#ysfDomainsChips');
+      const domainsListWrap = panel.querySelector('#ysfDomainsList');
+      const showAllDomainsCheckbox = panel.querySelector('#ysfShowAllDomains');
+      const domainQuickWrap = panel.querySelector('#ysfEntitiesDomainQuick');
+      const chipsWrap = panel.querySelector('#ysfEntitiesChips');
+      const listWrap = panel.querySelector('#ysfEntitiesList');
+      if (!enabledCheckbox || !searchInput || !filterChipsWrap || !filterListWrap || !domainsChipsWrap || !domainsListWrap || !showAllDomainsCheckbox || !domainQuickWrap || !chipsWrap || !listWrap) return;
+
+      const commit = () => {
+        applyUiToConfig();
+        if (typeof updateConfig === 'function') updateConfig();
+        setTimeout(emitConfig, 0);
+      };
+
+      enabledCheckbox.addEventListener('change', commit);
+      searchInput.addEventListener('input', () => {
+        renderEntitiesUi();
+      });
+
+      filterListWrap.addEventListener('click', (event) => {
+        const button = event?.target?.closest?.('.ysf-option[data-filter-key]');
+        if (!button) return;
+        const filterKey = String(button.dataset.filterKey || '').trim();
+        if (!filterKey) return;
+        const selectedSet = getSelectedFilterSet(panel);
+        if (selectedSet.has(filterKey)) selectedSet.delete(filterKey);
+        else selectedSet.add(filterKey);
+        setSelectedFiltersFromList(panel, Array.from(selectedSet));
+        renderFiltersUi();
+        commit();
+      });
+
+      filterChipsWrap.addEventListener('click', (event) => {
+        const removeBtn = event?.target?.closest?.('.ysf-chip-remove[data-remove-filter-key]');
+        if (!removeBtn) return;
+        const filterKey = String(removeBtn.dataset.removeFilterKey || '').trim();
+        if (!filterKey) return;
+        const selectedSet = getSelectedFilterSet(panel);
+        selectedSet.delete(filterKey);
+        setSelectedFiltersFromList(panel, Array.from(selectedSet));
+        renderFiltersUi();
+        commit();
+      });
+
+      domainsListWrap.addEventListener('click', (event) => {
+        const button = event?.target?.closest?.('.ysf-option[data-domain]');
+        if (!button) return;
+        const domain = String(button.dataset.domain || '').trim().toLowerCase();
+        if (!domain) return;
+        const selectedSet = getSelectedDomainSet(panel);
+        if (selectedSet.has(domain)) selectedSet.delete(domain);
+        else selectedSet.add(domain);
+        setSelectedDomainsFromList(panel, Array.from(selectedSet));
+        renderDomainsUi();
+        renderEntitiesUi();
+        commit();
+      });
+
+      domainsChipsWrap.addEventListener('click', (event) => {
+        const removeBtn = event?.target?.closest?.('.ysf-chip-remove[data-remove-domain]');
+        if (!removeBtn) return;
+        const domain = String(removeBtn.dataset.removeDomain || '').trim().toLowerCase();
+        if (!domain) return;
+        const selectedSet = getSelectedDomainSet(panel);
+        selectedSet.delete(domain);
+        setSelectedDomainsFromList(panel, Array.from(selectedSet));
+        renderDomainsUi();
+        renderEntitiesUi();
+        commit();
+      });
+
+      showAllDomainsCheckbox.addEventListener('change', () => {
+        renderDomainsUi();
+        renderEntitiesUi();
+      });
+
+      domainQuickWrap.addEventListener('click', (event) => {
+        const button = event?.target?.closest?.('.ysf-domain-quick-btn[data-entity-domain-quick]');
+        if (!button) return;
+        const domain = String(button.dataset.entityDomainQuick || '').trim().toLowerCase();
+        if (!domain) return;
+
+        const domainEntityIds = getEntityIdsForDomain(domain, panel);
+        if (!domainEntityIds.length) return;
+        const selectedSet = getSelectedSet(panel);
+        const allSelected = domainEntityIds.every(entityId => selectedSet.has(entityId));
+
+        if (allSelected) {
+          domainEntityIds.forEach(entityId => selectedSet.delete(entityId));
+        } else {
+          domainEntityIds.forEach(entityId => selectedSet.add(entityId));
+        }
+
+        setSelectedFromList(panel, Array.from(selectedSet));
+        renderEntitiesUi();
+        commit();
+      });
+
+      listWrap.addEventListener('click', (event) => {
+        const button = event?.target?.closest?.('.ysf-option[data-entity-id]');
+        if (!button) return;
+        const entityId = String(button.dataset.entityId || '').trim();
+        if (!entityId) return;
+        const selectedSet = getSelectedSet(panel);
+        if (selectedSet.has(entityId)) selectedSet.delete(entityId);
+        else selectedSet.add(entityId);
+        setSelectedFromList(panel, Array.from(selectedSet));
+        renderEntitiesUi();
+        commit();
+      });
+
+      chipsWrap.addEventListener('click', (event) => {
+        const removeBtn = event?.target?.closest?.('.ysf-chip-remove[data-remove-entity-id]');
+        if (!removeBtn) return;
+        const entityId = String(removeBtn.dataset.removeEntityId || '').trim();
+        if (!entityId) return;
+        const selectedSet = getSelectedSet(panel);
+        selectedSet.delete(entityId);
+        setSelectedFromList(panel, Array.from(selectedSet));
+        renderEntitiesUi();
+        commit();
+      });
+
+      panel.__yangcStatusFiltersEventsInstalled = true;
+    };
+
+    try {
+      if (typeof window.updateConfig === 'function' && !window.updateConfig.__yangcStatusFiltersPreserveWrapped) {
+        const originalUpdateConfig = window.updateConfig;
+        const wrappedUpdateConfig = function(...args) {
+          const panel = ensurePanel();
+          const panelVisible = panel?.dataset?.ysfVisible === '1';
+          const beforeSnapshot = (panelVisible && panel?.__ysfPanelReady === true)
+            ? getStatusFiltersSnapshotFromUi(panel)
+            : normalizeConfig(getActiveCardConfig()?.status_filters || loadPersistedStatusFiltersSnapshot());
+          const result = originalUpdateConfig.apply(this, args);
+          syncStatusFilterSectionsToCurrentConfig();
+          const afterSnapshot = normalizeConfig(getActiveCardConfig()?.status_filters);
+          const shouldRestoreFromBefore = panelVisible
+            && isStatusFiltersEmpty(afterSnapshot)
+            && !isStatusFiltersEmpty(beforeSnapshot);
+          const finalSnapshot = shouldRestoreFromBefore ? beforeSnapshot : afterSnapshot;
+          const applied = applyStatusFiltersToCurrentConfig(finalSnapshot);
+          if (panel) {
+            panel.__ysfLastStableStatusFilters = normalizeConfig(applied);
+          }
+          persistStatusFiltersSnapshot(applied);
+          return result;
+        };
+        wrappedUpdateConfig.__yangcStatusFiltersPreserveWrapped = true;
+        window.updateConfig = wrappedUpdateConfig;
+      }
+    } catch (error) {}
+
+    const wrapWithRefresh = (fnName) => {
+      try {
+        const original = window[fnName];
+        if (typeof original !== 'function' || original.__yangcStatusFiltersWrapped) return;
+        const wrapped = function(...args) {
+          if (fnName === 'setUILanguage' && isApplyingIncomingConfig) {
+            const resultDuringIncoming = original.apply(this, args);
+            setTimeout(() => {
+              refreshPanelTexts();
+              syncUiFromConfig();
+            }, 0);
+            return resultDuringIncoming;
+          }
+          const nextUiLanguage = fnName === 'setUILanguage'
+            ? String(args?.[0] || '').trim().toLowerCase()
+            : '';
+          let preservedStatusFilters = null;
+          if (fnName === 'setUILanguage') {
+            ysfSyncSuspendUntil = Date.now() + 1800;
+            const panelBeforeLanguageChange = ensurePanel();
+            const panelIsReady = panelBeforeLanguageChange?.__ysfPanelReady === true;
+            preservedStatusFilters = panelIsReady
+              ? getStatusFiltersSnapshotFromUi(panelBeforeLanguageChange)
+              : normalizeConfig(getActiveCardConfig()?.status_filters || loadPersistedStatusFiltersSnapshot());
+            applyCardLanguageToConfig(nextUiLanguage);
+            const panel = panelBeforeLanguageChange || ensurePanel();
+            if (panel) {
+              panel.__ysfPreservedStatusFilters = { ...(preservedStatusFilters || {}) };
+              panel.__ysfLastStableStatusFilters = { ...(preservedStatusFilters || {}) };
+              panel.__ysfLanguageSwitchLockUntil = Date.now() + 6000;
+            }
+          }
+          const result = original.apply(this, args);
+          // Language switching should only re-render labels/placeholders.
+          // Full sync can overwrite in-memory selections while the editor is rebuilding.
+          if (fnName === 'setUILanguage') {
+            const restoreAfterLanguageSwitch = () => {
+              applyCardLanguageToConfig(nextUiLanguage);
+              const cardConfigAfterLanguageChange = getActiveCardConfig();
+              if (cardConfigAfterLanguageChange && typeof cardConfigAfterLanguageChange === 'object' && preservedStatusFilters) {
+                cardConfigAfterLanguageChange.status_filters = { ...preservedStatusFilters };
+              }
+              try {
+                if (Array.isArray(categories) && categories[activeCategoryIndex]?.config && typeof categories[activeCategoryIndex].config === 'object' && preservedStatusFilters) {
+                  categories[activeCategoryIndex].config.status_filters = { ...preservedStatusFilters };
+                }
+              } catch (error) {}
+              try {
+                if (config && typeof config === 'object' && preservedStatusFilters) {
+                  config.status_filters = { ...preservedStatusFilters };
+                }
+              } catch (error) {}
+              if (preservedStatusFilters) {
+                persistStatusFiltersSnapshot(preservedStatusFilters);
+              }
+              refreshPanelTexts();
+              const panel = ensurePanel();
+              const enabledCheckbox = panel?.querySelector?.('#ysfEnabled');
+              if (enabledCheckbox && preservedStatusFilters) {
+                enabledCheckbox.checked = preservedStatusFilters.enabled === true;
+              }
+              if (panel && preservedStatusFilters) {
+                setSelectedFiltersFromList(panel, preservedStatusFilters.visible_filters);
+                setSelectedDomainsFromList(panel, preservedStatusFilters.domains);
+                setSelectedFromList(panel, preservedStatusFilters.entities);
+                panel.__ysfLastStableStatusFilters = { ...preservedStatusFilters };
+              }
+              renderFiltersUi();
+              renderDomainsUi();
+              renderEntitiesUi();
+              ysfSyncSuspendUntil = Date.now() + 320;
+              setTimeout(emitConfig, 0);
+            };
+            setTimeout(restoreAfterLanguageSwitch, 0);
+            setTimeout(restoreAfterLanguageSwitch, 380);
+            setTimeout(() => { ysfSyncSuspendUntil = 0; }, 2200);
+          } else if (fnName === 'loadActiveCategoryIntoEditor') {
+            if (Date.now() >= ysfSyncSuspendUntil) {
+              syncUiFromConfig();
+            }
+          } else {
+            setTimeout(() => {
+              if (Date.now() < ysfSyncSuspendUntil) return;
+              syncUiFromConfig();
+            }, 0);
+          }
+          return result;
+        };
+        wrapped.__yangcStatusFiltersWrapped = true;
+        window[fnName] = wrapped;
+      } catch (error) {}
+    };
+
+    [
+      'loadActiveCategoryIntoEditor',
+      'selectCategory',
+      'addCategory',
+      'duplicateCategory',
+      'deleteCategory',
+      'setUILanguage'
+    ].forEach(wrapWithRefresh);
+
+    ensureStyles();
+    ensurePanel();
+    installEvents();
+    syncUiFromConfig();
+    window.__yangcRefreshStatusFilterEntities = () => {
+      refreshPanelTexts();
+      renderDomainsUi();
+      renderEntitiesUi();
+      renderFiltersUi();
+    };
+  };
+
   const boot = () => {
     disableManualConnectionStep();
     disableImportExportUi();
     disableEmbeddedPreviewUi();
+    installStatusFilterCorePatches();
     installGenerateYamlGuard();
     installCategoryTitleSync();
+    installCardTransparencyUi();
+    installStatusFiltersUi();
     disableEmbeddedPersistence();
     installHooks();
     installEntityPickerFixes();
@@ -1116,6 +3271,9 @@ class YangcCard extends HTMLElement {
         this._cardUpdateScheduled = false;
         this._cardUpdateFrameHandle = null;
         this._cardUpdateTimeoutHandle = null;
+        this._activeStatusFilter = 'all';
+        this._statusFilterPopupKey = '';
+        this._lockedCardLanguageCode = '';
     }
 
     connectedCallback() {
@@ -1138,6 +3296,14 @@ class YangcCard extends HTMLElement {
             && nextLanguageCode !== this._renderedLanguageCode;
         if (shouldRerenderForLanguage) {
             this._render();
+        }
+        if (this._config?.status_filters?.enabled === true) {
+            if (!shouldRerenderForLanguage && this._isInteractionActive()) {
+                this._pendingUpdateDuringInteraction = true;
+                return;
+            }
+            this._scheduleCardUpdate();
+            return;
         }
         const stateSnapshot = this._buildRelevantStateSignature(hass);
         if (!shouldRerenderForLanguage && !stateSnapshot.changed) {
@@ -1180,13 +3346,26 @@ class YangcCard extends HTMLElement {
             : 0;
         const activeStackConfig = this._stackCategories[safeStackIndex]?.config || null;
         const normalizedSource = activeStackConfig || incomingConfig;
+        const resolvedIncomingLanguage = this._normalizeCardLanguageCode(
+            normalizedSource?.language
+            || normalizedSource?.lang
+            || incomingConfig?.language
+            || incomingConfig?.lang
+        );
+        this._lockedCardLanguageCode = resolvedIncomingLanguage || '';
 
         this._config = this._normalizeCardConfig(normalizedSource);
+        if (!String(this._config?.language || '').trim() && this._lockedCardLanguageCode) {
+            this._config.language = this._lockedCardLanguageCode;
+        }
+        this._ensureActiveStatusFilterIsVisible();
         this._trackedEntityIds = this._collectTrackedEntityIds(this._config);
         this._lastRelevantStateSignature = '';
         this._entityStateRefCache.clear();
         this._entityStateTokenCache.clear();
         this._pendingUpdateDuringInteraction = false;
+        this._activeStatusFilter = 'all';
+        this._statusFilterPopupKey = '';
         this._activeClimateModesKey = null;
         this._isSelectingMediaSource = false;
         this._activeMediaSourceEntity = '';
@@ -1214,32 +3393,43 @@ class YangcCard extends HTMLElement {
         }
     }
 
+    _normalizeCardLanguageCode(value = '') {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw) return '';
+        const sanitized = raw.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim();
+        const base = sanitized.split(/[-_]/)[0];
+        const normalized = base || sanitized;
+        const aliases = {
+            iw: 'he',
+            hebrew: 'he',
+            עברית: 'he',
+            english: 'en',
+            אנגלית: 'en',
+            russian: 'ru',
+            русский: 'ru',
+            russkiy: 'ru',
+            רוסית: 'ru'
+        };
+        if (aliases[normalized]) return aliases[normalized];
+
+        if (sanitized.includes('עבר') || sanitized.includes('hebrew') || sanitized.includes('ivrit')) return 'he';
+        if (sanitized.includes('рус') || sanitized.includes('russian')) return 'ru';
+        if (sanitized.includes('english') || sanitized.includes('inglish')) return 'en';
+
+        const short = normalized.slice(0, 2);
+        if (['he', 'en', 'ru'].includes(short)) return short;
+        return '';
+    }
+
     _getCardLanguageCode() {
         const configuredLanguage = String(this._config?.language || this._config?.lang || '').trim();
-        let storedEditorLanguage = '';
-        try {
-            if (typeof localStorage !== 'undefined') {
-                storedEditorLanguage = String(localStorage.getItem('yangc_ui_language') || '').trim();
-            }
-        } catch (error) {}
-        const documentLanguage = (typeof document !== 'undefined')
-            ? String(document.documentElement?.lang || '').trim()
-            : '';
-        const candidate = String(
-            configuredLanguage
-            || storedEditorLanguage
-            || this._hass?.selectedLanguage
-            || this._hass?.locale?.language
-            || this._hass?.language
-            || this._hass?.user?.language
-            || documentLanguage
-            || (typeof navigator !== 'undefined' ? navigator.language : '')
-            || 'he'
-        ).trim().toLowerCase();
-        const base = candidate.split(/[-_]/)[0];
-        const normalizedBase = base || 'he';
-        if (normalizedBase === 'iw') return 'he';
-        return normalizedBase;
+        const candidates = [this._lockedCardLanguageCode, configuredLanguage];
+
+        for (const candidate of candidates) {
+            const normalized = this._normalizeCardLanguageCode(candidate);
+            if (normalized) return normalized;
+        }
+        return 'he';
     }
 
     _getQuickActionsTranslations() {
@@ -1432,12 +3622,21 @@ class YangcCard extends HTMLElement {
         delete incomingConfig[YANGC_EMBEDDED_EDITOR_STATE_KEY];
         const normalizedAutomationTitle = String(incomingConfig?.automations?.title || '').trim();
         const normalizedActionsTitle = String(incomingConfig.actions_title || '').trim();
+        const normalizedStatusFilters = this._normalizeStatusFiltersConfig(
+            incomingConfig.status_filters || {
+                enabled: incomingConfig.enable_status_filters,
+                entities: incomingConfig.status_filter_entities
+            }
+        );
 
         const normalizedAutomations = {
             enabled: this._normalizeBoolean(incomingConfig?.automations?.enabled, true),
             title: normalizedAutomationTitle,
-            icon: incomingConfig?.automations?.icon || 'mdi:lightning-bolt'
+            icon: incomingConfig?.automations?.icon || 'mdi:lightning-bolt',
+            collapsible: incomingConfig?.automations?.collapsible !== false
         };
+        const cardBgOpacity = this._normalizeOpacity(incomingConfig.card_bg_opacity, 0.85);
+        const headerStyle = this._normalizeHeaderStyle(incomingConfig.header_style, 'solid');
         const alwaysOpen = this._normalizeBoolean(incomingConfig.always_open ?? incomingConfig.disable_toggle, false);
         let collapsedDefault = this._normalizeBoolean(incomingConfig.collapsed_default, true);
         const enableDoubleClickSectionsToggle = this._normalizeBoolean(incomingConfig.enable_double_click_sections_toggle, false);
@@ -1495,6 +3694,9 @@ class YangcCard extends HTMLElement {
             curtains_title: incomingConfig.curtains_title || 'וילונות',
             media_title: incomingConfig.media_title || 'מדיה',
             actions_title: normalizedActionsTitle || normalizedAutomationTitle,
+            status_filters: normalizedStatusFilters,
+            card_bg_opacity: cardBgOpacity,
+            header_style: headerStyle,
             automations: normalizedAutomations,
             ...incomingConfig,
             sections,
@@ -1519,7 +3721,73 @@ class YangcCard extends HTMLElement {
             lights_columns: lightsColumns,
             collapsed_default: collapsedDefault,
             actions_title: normalizedActionsTitle || normalizedAutomationTitle,
+            status_filters: normalizedStatusFilters,
+            card_bg_opacity: cardBgOpacity,
+            header_style: headerStyle,
             automations: normalizedAutomations
+        };
+    }
+
+    _normalizeStatusFiltersConfig(rawStatusFilters = {}) {
+        const config = (rawStatusFilters && typeof rawStatusFilters === 'object') ? rawStatusFilters : {};
+        const entitiesSource = Array.isArray(config.entities)
+            ? config.entities
+            : (typeof config.entities === 'string' ? config.entities.split(',') : []);
+        const domainsSource = Array.isArray(config.domains)
+            ? config.domains
+            : (typeof config.domains === 'string' ? config.domains.split(',') : []);
+        const visibleFiltersSource = Array.isArray(config.visible_filters)
+            ? config.visible_filters
+            : (typeof config.visible_filters === 'string' ? config.visible_filters.split(',') : []);
+        const sectionIdsSource = Array.isArray(config.section_ids)
+            ? config.section_ids
+            : (typeof config.section_ids === 'string' ? config.section_ids.split(',') : []);
+        const entities = entitiesSource
+            .map(entityId => String(entityId || '').trim())
+            .filter(entityId => entityId && entityId.includes('.'));
+        const domains = domainsSource
+            .map(domain => String(domain || '').trim().toLowerCase())
+            .filter(Boolean);
+        const visibleFilters = visibleFiltersSource
+            .map(filterKey => String(filterKey || '').trim())
+            .filter(Boolean);
+        const sectionIds = sectionIdsSource
+            .map(sectionId => String(sectionId || '').trim())
+            .filter(Boolean);
+        const dedupedEntities = [];
+        const seenEntities = new Set();
+        entities.forEach(entityId => {
+            if (seenEntities.has(entityId)) return;
+            seenEntities.add(entityId);
+            dedupedEntities.push(entityId);
+        });
+        const dedupedDomains = [];
+        const seenDomains = new Set();
+        domains.forEach(domain => {
+            if (seenDomains.has(domain)) return;
+            seenDomains.add(domain);
+            dedupedDomains.push(domain);
+        });
+        const dedupedVisibleFilters = [];
+        const seenVisibleFilters = new Set();
+        visibleFilters.forEach(filterKey => {
+            if (seenVisibleFilters.has(filterKey)) return;
+            seenVisibleFilters.add(filterKey);
+            dedupedVisibleFilters.push(filterKey);
+        });
+        const dedupedSectionIds = [];
+        const seenSectionIds = new Set();
+        sectionIds.forEach(sectionId => {
+            if (seenSectionIds.has(sectionId)) return;
+            seenSectionIds.add(sectionId);
+            dedupedSectionIds.push(sectionId);
+        });
+        return {
+            enabled: this._normalizeBoolean(config.enabled, false),
+            entities: dedupedEntities,
+            domains: dedupedDomains,
+            visible_filters: dedupedVisibleFilters,
+            section_ids: dedupedSectionIds
         };
     }
 
@@ -1944,6 +4212,9 @@ class YangcCard extends HTMLElement {
             const sectionKey = String(sectionEl.dataset.sectionKey || '').trim();
             if (!sectionKey) return;
 
+            // Skip non-collapsible sections (they have a static icon, not a toggle button)
+            if (!sectionEl.querySelector('.section-icon-toggle')) return;
+
             sectionEl.classList.toggle('section-collapsed', shouldCollapse);
             const toggleBtn = sectionEl.querySelector('.section-icon-toggle');
             if (toggleBtn) {
@@ -1968,6 +4239,9 @@ class YangcCard extends HTMLElement {
     }
 
     _getDefaultSectionMeta(type) {
+        if (type === 'status_filter') {
+            return { title: 'פילטר מצב', icon: 'mdi:filter-outline' };
+        }
         if (type === 'cover') {
             return { title: 'וילונות', icon: 'mdi:curtains' };
         }
@@ -2063,7 +4337,10 @@ class YangcCard extends HTMLElement {
     }
 
     _normalizeSection(section, index, fallbackColumns) {
-        const sectionType = section?.type === 'cover'
+        const isFlaggedStatusFilter = section?.__yangc_status_filter_section === true;
+        const sectionType = isFlaggedStatusFilter
+            ? 'status_filter'
+            : (section?.type === 'cover'
             || section?.type === 'media_player'
             || section?.type === 'climate'
             || section?.type === 'fan'
@@ -2071,18 +4348,23 @@ class YangcCard extends HTMLElement {
             || section?.type === 'lock'
             || section?.type === 'action'
             || section?.type === 'mixed'
+            || section?.type === 'status_filter'
             ? section.type
-            : 'toggle';
+            : 'toggle');
         const defaults = this._getDefaultSectionMeta(sectionType);
+        const isStatusFilterSection = sectionType === 'status_filter';
         const normalizedSection = {
             id: section?.id || `section_${index + 1}`,
             type: sectionType,
             title: section?.title || defaults.title,
             icon: section?.icon || defaults.icon,
             visible: section?.visible !== false,
-            entities: Array.isArray(section?.entities)
+            collapsible: section?.collapsible !== false,
+            entities: isStatusFilterSection
+                ? []
+                : (Array.isArray(section?.entities)
                 ? section.entities.map(entity => this._normalizeSectionEntity(entity, sectionType)).filter(entity => entity.entity)
-                : []
+                : [])
         };
         if (sectionType === 'toggle' || sectionType === 'mixed') {
             normalizedSection.columns = this._normalizeColumns(section?.columns ?? section?.lights_columns ?? fallbackColumns, fallbackColumns);
@@ -2115,10 +4397,24 @@ class YangcCard extends HTMLElement {
     }
 
     _normalizeSections(config, fallbackColumns) {
+        const statusFilterSectionIds = new Set(
+            this._normalizeStatusFiltersConfig(config?.status_filters).section_ids
+                .map(sectionId => String(sectionId || '').trim())
+                .filter(Boolean)
+        );
         if (Array.isArray(config.sections) && config.sections.length) {
             return config.sections
-                .map((section, index) => this._normalizeSection(section, index, fallbackColumns))
-                .filter(section => section.entities.length > 0);
+                .map((section, index) => {
+                    const sourceSection = (section && typeof section === 'object') ? { ...section } : section;
+                    const sectionId = String(sourceSection?.id || '').trim();
+                    if (sectionId && statusFilterSectionIds.has(sectionId) && sourceSection && typeof sourceSection === 'object') {
+                        sourceSection.type = 'status_filter';
+                        sourceSection.__yangc_status_filter_section = true;
+                        sourceSection.entities = [];
+                    }
+                    return this._normalizeSection(sourceSection, index, fallbackColumns);
+                })
+                .filter(section => section.type === 'status_filter' || section.entities.length > 0);
         }
 
         const legacySections = [];
@@ -2546,14 +4842,23 @@ class YangcCard extends HTMLElement {
         const icon = section.icon || defaults.icon;
         const title = section.title || defaults.title;
         const sectionKey = this._getSectionCollapseKey(section, sectionIndex);
-        const isCollapsed = this._isSectionCollapsed(sectionKey);
+        const isCollapsible = section.collapsible !== false;
+        const isCollapsed = isCollapsible && this._isSectionCollapsed(sectionKey);
         const sectionClass = isCollapsed ? 'section section-collapsed' : 'section';
+        const filterableAttr = (section.type === 'toggle' || section.type === 'cover' || section.type === 'mixed')
+            ? ' data-filterable="true"'
+            : '';
         const sectionToggleLabel = this._getSectionToggleLabel(isCollapsed);
+        const sectionIconMarkup = isCollapsible
+            ? `<button type="button" class="section-icon-toggle" data-section-key="${sectionKey}" title="${sectionToggleLabel}" aria-label="${sectionToggleLabel}" aria-expanded="${isCollapsed ? 'false' : 'true'}">
+                  <ha-icon icon="${icon}" class="section-icon"></ha-icon>
+                </button>`
+            : `<span class="section-icon-static">
+                  <ha-icon icon="${icon}" class="section-icon"></ha-icon>
+                </span>`;
         const sectionHeader = `
               <div class="section-title">
-                <button type="button" class="section-icon-toggle" data-section-key="${sectionKey}" title="${sectionToggleLabel}" aria-label="${sectionToggleLabel}" aria-expanded="${isCollapsed ? 'false' : 'true'}">
-                  <ha-icon icon="${icon}" class="section-icon"></ha-icon>
-                </button>
+                ${sectionIconMarkup}
                 <span>${title}</span>
               </div>
         `;
@@ -2561,7 +4866,7 @@ class YangcCard extends HTMLElement {
         if (section.type === 'toggle') {
             const columns = this._normalizeColumns(section.columns, this._config?.lights_columns || 3);
             return `
-            <div class="${sectionClass}" data-section-key="${sectionKey}">
+            <div class="${sectionClass}" data-section-key="${sectionKey}"${filterableAttr}>
               ${sectionHeader}
               <div class="section-content">
                 <div class="lights-grid" id="lights-container-${sectionIndex}" style="grid-template-columns: repeat(${columns}, minmax(0, 1fr));">
@@ -2572,7 +4877,7 @@ class YangcCard extends HTMLElement {
         }
         if (section.type === 'cover') {
             return `
-            <div class="${sectionClass}" data-section-key="${sectionKey}">
+            <div class="${sectionClass}" data-section-key="${sectionKey}"${filterableAttr}>
               ${sectionHeader}
               <div class="section-content">
                 <div class="curtains-container" id="curtains-container-${sectionIndex}">
@@ -2650,7 +4955,7 @@ class YangcCard extends HTMLElement {
         if (section.type === 'mixed') {
             const columns = this._normalizeColumns(section.columns, this._config?.lights_columns || 3);
             return `
-            <div class="${sectionClass}" data-section-key="${sectionKey}">
+            <div class="${sectionClass}" data-section-key="${sectionKey}"${filterableAttr}>
               ${sectionHeader}
               <div class="section-content">
                 <div class="mixed-grid" id="mixed-container-${sectionIndex}" style="grid-template-columns: repeat(${columns}, minmax(0, 1fr));">
@@ -2660,6 +4965,473 @@ class YangcCard extends HTMLElement {
           `;
         }
         return '';
+    }
+
+    _getStatusFilterLabels() {
+        const translations = {
+            he: {
+                all: 'הכל',
+                lights_on: 'מנורות דולקות',
+                covers_open: 'תריסים פתוחים',
+                fans_on: 'מאווררים פעילים',
+                climates_on: 'מזגנים פעילים',
+                filters_title: 'פילטרים',
+                no_entities_now: 'אין ישויות מתאימות כרגע'
+            },
+            en: {
+                all: 'All',
+                lights_on: 'Lights On',
+                covers_open: 'Open Covers',
+                fans_on: 'Fans On',
+                climates_on: 'Climates On',
+                filters_title: 'Filters',
+                no_entities_now: 'No matching entities right now'
+            },
+            ar: {
+                all: 'الكل',
+                lights_on: 'أضواء قيد التشغيل',
+                covers_open: 'ستائر مفتوحة',
+                fans_on: 'مراوح تعمل',
+                climates_on: 'مكيفات تعمل',
+                filters_title: 'الفلاتر',
+                no_entities_now: 'لا توجد كيانات مطابقة حاليا'
+            },
+            ru: {
+                all: 'Все',
+                lights_on: 'Свет включен',
+                covers_open: 'Шторы открыты',
+                fans_on: 'Вентиляторы включены',
+                climates_on: 'Кондиционеры включены',
+                filters_title: 'Фильтры',
+                no_entities_now: 'Сейчас нет подходящих сущностей'
+            }
+        };
+        const lang = this._getCardLanguageCode();
+        return translations[lang] || translations.he || translations.en;
+    }
+
+    _getStatusFilterKeyOrder() {
+        return ['all', 'lights_on', 'covers_open', 'fans_on', 'climates_on'];
+    }
+
+    _getVisibleStatusFilterKeys() {
+        const allowed = new Set(this._getStatusFilterKeyOrder());
+        const configured = Array.isArray(this._config?.status_filters?.visible_filters)
+            ? this._config.status_filters.visible_filters
+            : [];
+        const normalized = configured
+            .map(key => String(key || '').trim())
+            .filter(key => allowed.has(key));
+        const deduped = [];
+        const seen = new Set();
+        normalized.forEach(key => {
+            if (seen.has(key)) return;
+            seen.add(key);
+            deduped.push(key);
+        });
+        return deduped.length ? deduped : this._getStatusFilterKeyOrder();
+    }
+
+    _isStatusFiltersEnabled() {
+        return this._config?.status_filters?.enabled === true;
+    }
+
+    _ensureActiveStatusFilterIsVisible() {
+        const visibleKeys = this._getVisibleStatusFilterKeys();
+        if (!visibleKeys.length) {
+            this._activeStatusFilter = 'all';
+            return;
+        }
+        if (!visibleKeys.includes(this._activeStatusFilter)) {
+            this._activeStatusFilter = visibleKeys[0];
+        }
+    }
+
+    _isEntityInStatusFilterScope(entityConfig = {}) {
+        const selectedEntities = Array.isArray(this._config?.status_filters?.entities)
+            ? this._config.status_filters.entities
+            : [];
+        const selectedDomains = Array.isArray(this._config?.status_filters?.domains)
+            ? this._config.status_filters.domains.map(domain => String(domain || '').trim().toLowerCase()).filter(Boolean)
+            : [];
+        const entityId = String(entityConfig?.entity || '').trim();
+        if (!entityId) return false;
+        const domain = this._getEntityDomain(entityId);
+        if (selectedEntities.length) return selectedEntities.includes(entityId);
+        if (selectedDomains.length) return selectedDomains.includes(domain);
+        return true;
+    }
+
+    _getStatusFilterSourceEntities() {
+        const states = this._hass?.states || {};
+        const source = Object.keys(states).map(entityId => ({
+            entity: entityId,
+            name: states[entityId]?.attributes?.friendly_name || entityId
+        }));
+        const filtered = source.filter(entityConfig => this._isEntityInStatusFilterScope(entityConfig));
+        return filtered.slice(0, 600);
+    }
+
+    _isStatusFilterEntityActive(entityConfig = {}) {
+        if (!entityConfig || typeof entityConfig !== 'object') return false;
+        const entityId = String(entityConfig.entity || '').trim();
+        if (!entityId) return false;
+        const meta = this._getMixedEntityMeta(entityConfig);
+        if (meta && typeof meta.active === 'boolean') return meta.active;
+        return false;
+    }
+
+    _matchesStatusFilter(entityConfig = {}, filterKey = 'all') {
+        const activeFilter = String(filterKey || 'all').trim();
+        if (activeFilter === 'all') return this._isStatusFilterEntityActive(entityConfig);
+
+        const entityId = String(entityConfig?.entity || '').trim();
+        const domain = String(this._getEntityDomain(entityId) || '').trim().toLowerCase();
+        if (!entityId || !domain) return false;
+
+        if (activeFilter === 'lights_on') {
+            if (domain !== 'light') return false;
+            return this._isLightEntityOn(entityId);
+        }
+
+        if (activeFilter === 'covers_open') {
+            if (domain !== 'cover') return false;
+            return this._isCoverEntityOpen(entityConfig);
+        }
+
+        if (activeFilter === 'fans_on') {
+            if (domain !== 'fan') return false;
+            const state = this._hass?.states?.[entityId];
+            if (this._isUnavailableState(state)) return false;
+            return String(state?.state || '').trim().toLowerCase() === 'on';
+        }
+
+        if (activeFilter === 'climates_on') {
+            if (domain !== 'climate') return false;
+            const state = this._hass?.states?.[entityId];
+            if (this._isUnavailableState(state)) return false;
+            return String(state?.state || '').trim().toLowerCase() !== 'off';
+        }
+
+        return true;
+    }
+
+    _isUnavailableState(stateObj) {
+        const rawState = String(stateObj?.state || '').trim().toLowerCase();
+        return !stateObj || !rawState || rawState === 'unknown' || rawState === 'unavailable';
+    }
+
+    _isLightEntityOn(entityId = '') {
+        const state = this._hass?.states?.[String(entityId || '').trim()];
+        if (this._isUnavailableState(state)) return false;
+        return String(state.state || '').trim().toLowerCase() === 'on';
+    }
+
+    _isCoverEntityOpen(entityConfig = {}) {
+        const entityId = String(entityConfig?.entity || '').trim();
+        const state = this._hass?.states?.[entityId];
+        if (this._isUnavailableState(state)) return false;
+        const visual = this._getCurtainVisualState(state, entityConfig?.reversed === true);
+        return visual.stateClass === 'open' || visual.stateClass === 'partial';
+    }
+
+    _shouldIncludeEntityByStatusFilter(entityConfig = {}, sectionType = '') {
+        if (!this._isStatusFiltersEnabled()) return true;
+        if (!this._isEntityInStatusFilterScope(entityConfig)) return false;
+
+        const activeFilter = String(this._activeStatusFilter || 'all').trim();
+        return this._matchesStatusFilter(entityConfig, activeFilter);
+    }
+
+    _getStatusFilterStats(visibleSections = []) {
+        const stats = { all: 0, lights_on: 0, covers_open: 0, fans_on: 0, climates_on: 0 };
+        if (!this._isStatusFiltersEnabled()) return stats;
+        const sourceEntities = this._getStatusFilterSourceEntities();
+        stats.all = sourceEntities.length;
+        stats.lights_on = sourceEntities.filter(entityConfig => this._matchesStatusFilter(entityConfig, 'lights_on')).length;
+        stats.covers_open = sourceEntities.filter(entityConfig => this._matchesStatusFilter(entityConfig, 'covers_open')).length;
+        stats.fans_on = sourceEntities.filter(entityConfig => this._matchesStatusFilter(entityConfig, 'fans_on')).length;
+        stats.climates_on = sourceEntities.filter(entityConfig => this._matchesStatusFilter(entityConfig, 'climates_on')).length;
+
+        return stats;
+    }
+
+    _buildStatusFilterBarMarkup(visibleSections = []) {
+        const labels = this._getStatusFilterLabels();
+        const stats = this._getStatusFilterStats(visibleSections);
+        const filters = this._getVisibleStatusFilterKeys().map(key => ({
+            key,
+            label: labels[key] || key,
+            count: Number(stats[key]) || 0
+        }));
+
+        return `
+          <div class="status-filters-wrap status-filters-grid" id="status-filters-wrap">
+            ${filters.map(filter => `
+              <button
+                type="button"
+                class="status-filter-btn${this._activeStatusFilter === filter.key ? ' active' : ''}"
+                data-status-filter="${filter.key}"
+                title="${this._escapeHtml(filter.label)} (${filter.count})"
+              >
+                <span class="status-filter-label">${this._escapeHtml(filter.label)}</span>
+                <span class="status-filter-count">${filter.count}</span>
+              </button>
+            `).join('')}
+          </div>
+        `;
+    }
+
+    _buildStatusFilterResultsSectionMarkup() {
+        const sectionKey = 'section::status_filter_results';
+        const isCollapsed = this._isSectionCollapsed(sectionKey);
+        const sectionToggleLabel = this._getSectionToggleLabel(isCollapsed);
+        return `
+          <div class="section ${isCollapsed ? 'section-collapsed' : ''}" data-section-key="${sectionKey}" data-filterable="true">
+            <div class="section-title">
+              <button type="button" class="section-icon-toggle" data-section-key="${sectionKey}" title="${sectionToggleLabel}" aria-label="${sectionToggleLabel}" aria-expanded="${isCollapsed ? 'false' : 'true'}">
+                <ha-icon icon="mdi:view-grid-outline" class="section-icon"></ha-icon>
+              </button>
+              <span>יישויות לפי פילטר</span>
+            </div>
+            <div class="section-content">
+              <div class="mixed-grid" id="status-filter-results" style="grid-template-columns: repeat(${this._normalizeColumns(this._config?.lights_columns, 3)}, minmax(0, 1fr));"></div>
+            </div>
+          </div>
+        `;
+    }
+
+    _renderStatusFilterResults(containerId = 'status-filter-results') {
+        if (!this._isStatusFiltersEnabled()) return;
+        const container = this.shadowRoot.getElementById(containerId);
+        if (!container) return;
+
+        const entities = this._getStatusFilterSourceEntities().filter(entityConfig =>
+            this._matchesStatusFilter(entityConfig, this._activeStatusFilter)
+        );
+
+        container.innerHTML = entities.map(entityConfig => {
+            const state = this._hass.states[entityConfig.entity];
+            const meta = this._getMixedEntityMeta(entityConfig);
+            const domain = this._getEntityDomain(entityConfig.entity);
+            const accentColor = domain === 'light'
+                ? this._resolveLightAccentColor(entityConfig.color, state)
+                : entityConfig.color;
+            const styleVars = this._entityAccentStyle(accentColor);
+            const styleAttr = styleVars ? ` style="${styleVars}"` : '';
+            return `
+        <div class="mixed-entity-card ${meta.active ? 'active' : ''} ${meta.unavailable ? 'unavailable' : ''}" data-entity="${entityConfig.entity}"${styleAttr}>
+          <button type="button" class="mixed-entity-btn" data-entity="${entityConfig.entity}">
+            <div class="mixed-entity-icon">
+              <ha-icon icon="${meta.icon || 'mdi:view-grid-outline'}"></ha-icon>
+            </div>
+            <div class="mixed-entity-text has-state">
+              <span class="mixed-entity-name">${entityConfig.name || state?.attributes?.friendly_name || entityConfig.entity}</span>
+              <span class="mixed-entity-state">${meta.stateLabel}</span>
+            </div>
+          </button>
+        </div>
+      `;
+        }).join('');
+
+        container.querySelectorAll('.mixed-entity-btn').forEach(btn => {
+            this._attachEntityPressHandlers(btn, btn.dataset.entity, () => {
+                this._runMixedEntity(btn.dataset.entity);
+            });
+        });
+    }
+
+    _getStatusFilterEntitiesForKey(filterKey = 'all') {
+        return this._getStatusFilterSourceEntities().filter(entityConfig =>
+            this._matchesStatusFilter(entityConfig, filterKey)
+        );
+    }
+
+    _getStatusFilterPopupTitle(filterKey = 'all') {
+        const labels = this._getStatusFilterLabels();
+        return labels[filterKey] || labels.all || labels.filters_title || 'Filters';
+    }
+
+    _isStatusFilterPopupOpen() {
+        return !!this._statusFilterPopupKey;
+    }
+
+    _openStatusFilterPopup(filterKey = 'all') {
+        this._statusFilterPopupKey = String(filterKey || 'all').trim() || 'all';
+        this._syncStatusFilterPopup();
+    }
+
+    _closeStatusFilterPopup() {
+        this._statusFilterPopupKey = '';
+        this._syncStatusFilterPopup();
+    }
+
+    _runStatusFilterEntityAction(entityId = '', filterKey = 'all') {
+        const normalizedEntityId = String(entityId || '').trim();
+        if (!normalizedEntityId) return;
+        const domain = this._getEntityDomain(normalizedEntityId);
+
+        if (filterKey === 'lights_on' && domain === 'light') {
+            this._hass.callService('light', 'turn_off', { entity_id: normalizedEntityId }).catch(() => {});
+            return;
+        }
+
+        if (filterKey === 'covers_open' && domain === 'cover') {
+            this._hass.callService('cover', 'close_cover', { entity_id: normalizedEntityId }).catch(() => {});
+            return;
+        }
+
+        if (filterKey === 'fans_on' && domain === 'fan') {
+            this._hass.callService('fan', 'turn_off', { entity_id: normalizedEntityId }).catch(() => {});
+            return;
+        }
+
+        if (filterKey === 'climates_on' && domain === 'climate') {
+            this._hass.callService('climate', 'set_hvac_mode', {
+                entity_id: normalizedEntityId,
+                hvac_mode: 'off'
+            }).catch(() => {});
+            return;
+        }
+
+        this._runMixedEntity(normalizedEntityId);
+    }
+
+    _getStatusFilterPopupItemFromEvent(event) {
+        if (!event) return null;
+
+        if (event.target instanceof Element) {
+            const direct = event.target.closest('.status-filter-popup-item[data-entity][data-filter-key]');
+            if (direct) return direct;
+        }
+
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        for (const node of path) {
+            if (!(node instanceof Element)) continue;
+            if (node.matches('.status-filter-popup-item[data-entity][data-filter-key]')) {
+                return node;
+            }
+        }
+        return null;
+    }
+
+    _syncStatusFilterPopup() {
+        const modal = this.shadowRoot?.getElementById('status-filter-popup');
+        if (!modal) return;
+        const isOpen = this._isStatusFilterPopupOpen();
+        modal.classList.toggle('open', isOpen);
+
+        const titleEl = modal.querySelector('.status-filter-popup-title');
+        const listEl = modal.querySelector('.status-filter-popup-list');
+        if (!titleEl || !listEl) return;
+
+        const popupKey = String(this._statusFilterPopupKey || 'all').trim() || 'all';
+        titleEl.textContent = this._getStatusFilterPopupTitle(popupKey);
+
+        if (!isOpen) {
+            listEl.innerHTML = '';
+            listEl.style.removeProperty('--status-popup-cols');
+            return;
+        }
+
+        const entities = this._getStatusFilterEntitiesForKey(popupKey);
+        if (!entities.length) {
+            this._closeStatusFilterPopup();
+            return;
+        }
+
+        const popupColumns = Math.max(1, Math.min(4, entities.length || 1));
+        listEl.style.setProperty('--status-popup-cols', String(popupColumns));
+        listEl.innerHTML = entities.length ? entities.map(entityConfig => {
+            const state = this._hass?.states?.[entityConfig.entity];
+            const meta = this._getMixedEntityMeta(entityConfig);
+            const domain = this._getEntityDomain(entityConfig.entity);
+            const accentColor = domain === 'light'
+                ? this._resolveLightAccentColor(entityConfig.color, state)
+                : entityConfig.color;
+            const styleVars = this._entityAccentStyle(accentColor);
+            const styleAttr = styleVars ? ` style="${styleVars}"` : '';
+            const safeEntityId = this._escapeHtml(entityConfig.entity || '');
+            const safeFilterKey = this._escapeHtml(popupKey);
+            const safeIcon = this._escapeHtml(meta.icon || 'mdi:view-grid-outline');
+            const safeName = this._escapeHtml(entityConfig.name || state?.attributes?.friendly_name || entityConfig.entity || '');
+            const safeStateLabel = this._escapeHtml(meta.stateLabel || '');
+            const isLightOnHighlight = domain === 'light' && meta.active && !meta.unavailable;
+            return `
+              <button type="button" class="status-filter-popup-item ${meta.active ? 'active' : ''} ${meta.unavailable ? 'unavailable' : ''} ${isLightOnHighlight ? 'light-on-highlight' : ''}" data-entity="${safeEntityId}" data-filter-key="${safeFilterKey}"${styleAttr}>
+                <ha-icon icon="${safeIcon}"></ha-icon>
+                <span class="name">${safeName}</span>
+                <span class="state">${safeStateLabel}</span>
+              </button>
+            `;
+        }).join('') : `<div class="status-filter-popup-empty">${this._escapeHtml(this._getStatusFilterLabels().no_entities_now || 'No matching entities right now')}</div>`;
+
+        listEl.querySelectorAll('.status-filter-popup-item[data-entity][data-filter-key]').forEach(item => {
+            item.addEventListener('click', event => {
+                event.preventDefault();
+                event.stopPropagation();
+                const entityId = String(item.dataset.entity || '').trim();
+                const filterKey = String(item.dataset.filterKey || this._activeStatusFilter || 'all').trim();
+                if (!entityId) return;
+                this._runStatusFilterEntityAction(entityId, filterKey);
+                this._scheduleCardUpdate();
+                setTimeout(() => {
+                    if (!this._isStatusFilterPopupOpen()) return;
+                    const remaining = this._getStatusFilterEntitiesForKey(filterKey).length;
+                    if (remaining <= 0) {
+                        this._closeStatusFilterPopup();
+                    }
+                }, 260);
+            });
+        });
+    }
+
+    _syncStatusFilterBar(visibleSections = []) {
+        const wrapper = this.shadowRoot?.getElementById('status-filters-wrap');
+        if (!wrapper) return;
+        const labels = this._getStatusFilterLabels();
+        const stats = this._getStatusFilterStats(visibleSections);
+        const labelByKey = {
+            all: labels.all,
+            lights_on: labels.lights_on,
+            covers_open: labels.covers_open,
+            fans_on: labels.fans_on,
+            climates_on: labels.climates_on
+        };
+
+        wrapper.querySelectorAll('.status-filter-btn').forEach(button => {
+            const filterKey = String(button.dataset.statusFilter || 'all').trim();
+            button.classList.toggle('active', filterKey === this._activeStatusFilter);
+            const labelEl = button.querySelector('.status-filter-label');
+            if (labelEl) {
+                labelEl.textContent = String(labelByKey[filterKey] || filterKey);
+            }
+            const countEl = button.querySelector('.status-filter-count');
+            if (countEl) {
+                const count = Number(stats[filterKey]) || 0;
+                countEl.textContent = String(count);
+                button.setAttribute('title', `${labelByKey[filterKey] || filterKey} (${count})`);
+            }
+        });
+    }
+
+    _syncSectionVisibilityForStatusFilter() {
+        if (!this.shadowRoot) return;
+        if (!this._isStatusFiltersEnabled()) {
+            this.shadowRoot.querySelectorAll('.section[data-filterable="true"]').forEach(sectionEl => {
+                sectionEl.classList.remove('status-filter-hidden');
+            });
+            return;
+        }
+        const isFiltering = this._activeStatusFilter !== 'all';
+        this.shadowRoot.querySelectorAll('.section[data-filterable="true"]').forEach(sectionEl => {
+            if (!isFiltering) {
+                sectionEl.classList.remove('status-filter-hidden');
+                return;
+            }
+            const hasVisibleItems = !!sectionEl.querySelector('.section-content > * > *');
+            sectionEl.classList.toggle('status-filter-hidden', !hasVisibleItems);
+        });
     }
 
     _render() {
@@ -2678,10 +5450,14 @@ class YangcCard extends HTMLElement {
         const actionsTitle = this._resolveActionsTitle(automationsConfig);
         const actionsIcon = automationsConfig.icon || 'mdi:lightning-bolt';
         const actionsSectionKey = 'section::actions';
-        const isActionsSectionCollapsed = this._isSectionCollapsed(actionsSectionKey);
+        const isActionsCollapsible = automationsConfig.collapsible !== false;
+        const isActionsSectionCollapsed = isActionsCollapsible && this._isSectionCollapsed(actionsSectionKey);
         const actionsSectionToggleLabel = this._getSectionToggleLabel(isActionsSectionCollapsed);
         const canToggleCard = this._config.always_open !== true;
         this._renderedLanguageCode = this._getCardLanguageCode();
+        if (this._isStatusFiltersEnabled()) {
+            this._ensureActiveStatusFilterIsVisible();
+        }
 
         this.shadowRoot.innerHTML = `
       <style>
@@ -2695,14 +5471,19 @@ class YangcCard extends HTMLElement {
 	        </div>
 	        
 	        <div class="content">
+            ${this._isStatusFiltersEnabled() ? this._buildStatusFilterBarMarkup(visibleSections) : ''}
 	          ${visibleSections.map((section, sectionIndex) => this._buildSectionMarkup(section, sectionIndex)).join('')}
 
 		          ${showActions ? `
 	          <div class="section actions-section ${isActionsSectionCollapsed ? 'section-collapsed' : ''}" data-section-key="${actionsSectionKey}">
 	            <div class="section-title">
-	              <button type="button" class="section-icon-toggle" data-section-key="${actionsSectionKey}" title="${actionsSectionToggleLabel}" aria-label="${actionsSectionToggleLabel}" aria-expanded="${isActionsSectionCollapsed ? 'false' : 'true'}">
+	              ${isActionsCollapsible
+                    ? `<button type="button" class="section-icon-toggle" data-section-key="${actionsSectionKey}" title="${actionsSectionToggleLabel}" aria-label="${actionsSectionToggleLabel}" aria-expanded="${isActionsSectionCollapsed ? 'false' : 'true'}">
 	                <ha-icon icon="${actionsIcon}" class="section-icon"></ha-icon>
-	              </button>
+	              </button>`
+                    : `<span class="section-icon-static">
+	                <ha-icon icon="${actionsIcon}" class="section-icon"></ha-icon>
+	              </span>`}
 	              <span id="actions-title-text">${actionsTitle}</span>
 	            </div>
               <div class="section-content">
@@ -2735,8 +5516,18 @@ class YangcCard extends HTMLElement {
               </div>
 	          </div>
 	          ` : ''}
-	        </div>
+		        </div>
 	      </div>
+        <div class="status-filter-popup-modal" id="status-filter-popup">
+          <div class="status-filter-popup-backdrop" data-action="close-status-filter-popup"></div>
+          <div class="status-filter-popup-dialog">
+            <div class="status-filter-popup-head">
+              <span class="status-filter-popup-title">${this._escapeHtml(this._getStatusFilterLabels().filters_title || 'פילטרים')}</span>
+              <button type="button" class="status-filter-popup-close" data-action="close-status-filter-popup">✕</button>
+            </div>
+            <div class="status-filter-popup-list"></div>
+          </div>
+        </div>
 	    `;
 
         this._attachEventListeners();
@@ -2744,22 +5535,44 @@ class YangcCard extends HTMLElement {
 
     _getStyles() {
         const accentColor = this._config.accent_color;
-        let accentGradient, accentVar, accentRgb;
+        const cardBgOpacity = this._normalizeOpacity(this._config?.card_bg_opacity, 0.85);
+        const headerStyle = this._normalizeHeaderStyle(this._config?.header_style, 'solid');
+        const cardBgPercent = Math.max(0, Math.min(100, Math.round(cardBgOpacity * 100)));
+        const cardBackdropBlurPx = cardBgOpacity <= 0.01 ? 0 : 14;
+        const cardBorderAlpha = Math.max(0, Math.min(0.1, cardBgOpacity * 0.1));
+        const itemBgAlpha = Math.max(0, Math.min(0.05, cardBgOpacity * 0.05));
+        const itemBgHoverAlpha = Math.max(0, Math.min(0.1, cardBgOpacity * 0.1));
+        const itemActiveAlpha = Math.max(0, Math.min(0.2, cardBgOpacity * 0.2));
+        const headerShimmerAlpha = Math.max(0, Math.min(0.1, cardBgOpacity * 0.1));
+        let accentGradient, accentVar, accentRgb, cardHeaderGradient;
+        let cardHeaderSolid;
         if (accentColor) {
             const rgb = this._hexToRgb(accentColor);
             const darker = this._darkenHex(accentColor, 0.25);
+            const darkerRgb = this._hexToRgb(darker);
             accentGradient = `linear-gradient(135deg, ${accentColor} 0%, ${darker} 100%)`;
             accentVar = accentColor;
             accentRgb = `${rgb.r}, ${rgb.g}, ${rgb.b}`;
+            cardHeaderGradient = `linear-gradient(135deg, rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${cardBgOpacity}) 0%, rgba(${darkerRgb.r}, ${darkerRgb.g}, ${darkerRgb.b}, ${cardBgOpacity}) 100%)`;
+            cardHeaderSolid = `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${cardBgOpacity})`;
         } else {
             accentGradient = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
             accentVar = '#667eea';
             accentRgb = '102, 126, 234';
+            cardHeaderGradient = `linear-gradient(135deg, rgba(102, 126, 234, ${cardBgOpacity}) 0%, rgba(118, 75, 162, ${cardBgOpacity}) 100%)`;
+            cardHeaderSolid = `rgba(102, 126, 234, ${cardBgOpacity})`;
         }
         return `
       :host {
-        --card-bg: rgba(30, 30, 40, 0.85);
-        --card-border: rgba(255, 255, 255, 0.1);
+        --card-theme-bg: var(--ha-card-background, var(--card-background-color, rgb(30, 30, 40)));
+        --card-bg-fallback: rgba(30, 30, 40, ${cardBgOpacity});
+        --card-bg: color-mix(in srgb, var(--card-theme-bg) ${cardBgPercent}%, transparent);
+        --card-bg-blur: ${cardBackdropBlurPx}px;
+        --card-border: rgba(255, 255, 255, ${cardBorderAlpha});
+        --card-header-gradient: ${cardHeaderGradient};
+        --card-header-solid: ${cardHeaderSolid};
+        --card-header-bg: ${headerStyle === 'gradient' ? 'var(--card-header-gradient)' : 'var(--card-header-solid)'};
+        --card-header-shimmer-alpha: ${headerShimmerAlpha};
         --accent-gradient: ${accentGradient};
         --accent-color: ${accentVar};
         --accent-rgb: ${accentRgb};
@@ -2771,9 +5584,9 @@ class YangcCard extends HTMLElement {
         --warning-color: #fbbf24;
         --danger-color: #ef4444;
         --danger-glow: rgba(239, 68, 68, 0.3);
-        --item-bg: rgba(255, 255, 255, 0.05);
-        --item-bg-hover: rgba(255, 255, 255, 0.1);
-        --item-active: rgba(var(--accent-rgb), 0.2);
+        --item-bg: rgba(255, 255, 255, ${itemBgAlpha});
+        --item-bg-hover: rgba(255, 255, 255, ${itemBgHoverAlpha});
+        --item-active: rgba(var(--accent-rgb), ${itemActiveAlpha});
         --curtain-open: #3b82f6;
         --curtain-closed: #6b7280;
         direction: rtl;
@@ -2786,17 +5599,19 @@ class YangcCard extends HTMLElement {
       }
 
       .card-container {
+        background: var(--card-bg-fallback);
         background: var(--card-bg);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
+        backdrop-filter: blur(var(--card-bg-blur));
+        -webkit-backdrop-filter: blur(var(--card-bg-blur));
         border-radius: 24px;
         border: 1px solid var(--card-border);
         overflow: hidden;
         font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        container-type: inline-size;
       }
 
       .card-header {
-        background: var(--accent-gradient);
+        background: var(--card-header-bg);
         padding: 20px 24px;
         display: flex;
         align-items: center;
@@ -2819,7 +5634,7 @@ class YangcCard extends HTMLElement {
         right: -50%;
         width: 200%;
         height: 200%;
-        background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 60%);
+        background: radial-gradient(circle, rgba(255,255,255,var(--card-header-shimmer-alpha)) 0%, transparent 60%);
         animation: shimmer 3s ease-in-out infinite;
       }
 
@@ -2882,10 +5697,315 @@ class YangcCard extends HTMLElement {
         gap: 24px;
       }
 
+      .status-filters-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .status-filters-wrap.status-filters-grid {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        justify-content: flex-start;
+        gap: 8px;
+        width: 100%;
+      }
+
+      .status-filter-btn {
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--text-primary);
+        border-radius: 999px;
+        padding: 6px 12px;
+        padding: clamp(6px, 1.4cqw, 9px) clamp(10px, 2.4cqw, 14px);
+        display: inline-flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 9px;
+        cursor: pointer;
+        transition: all 0.16s ease;
+        width: auto;
+        flex: 1 1 170px;
+        max-width: 100%;
+        min-width: 0;
+        min-height: 42px;
+        min-height: clamp(40px, 7.8cqw, 48px);
+      }
+
+      .status-filter-btn:hover {
+        color: var(--text-primary);
+        border-color: rgba(var(--accent-rgb), 0.75);
+        background: rgba(var(--accent-rgb), 0.18);
+      }
+
+      .status-filter-btn.active {
+        color: var(--text-primary);
+        border-color: rgba(var(--accent-rgb), 0.95);
+        background: rgba(var(--accent-rgb), 0.28);
+        box-shadow: 0 0 0 1px rgba(var(--accent-rgb), 0.25);
+      }
+
+      .status-filter-label {
+        font-size: 0.9rem;
+        font-size: clamp(0.84rem, 2.1cqw, 1rem);
+        font-weight: 700;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        line-height: 1.18;
+        letter-spacing: 0.01em;
+        min-width: 0;
+        text-align: start;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+      }
+
+      .status-filter-count {
+        min-width: 26px;
+        min-width: clamp(24px, 5.4cqw, 30px);
+        height: 26px;
+        height: clamp(24px, 5.4cqw, 30px);
+        border-radius: 999px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.92rem;
+        font-size: clamp(0.84rem, 2cqw, 1.05rem);
+        font-weight: 800;
+        padding: 0 7px;
+        padding: 0 clamp(6px, 1.3cqw, 8px);
+        color: var(--text-primary);
+        background: rgba(0, 0, 0, 0.42);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        box-shadow: 0 1px 6px rgba(0, 0, 0, 0.22);
+        flex: 0 0 auto;
+      }
+
+      .status-filter-btn.active .status-filter-count {
+        background: rgba(var(--accent-rgb), 0.32);
+        border-color: rgba(var(--accent-rgb), 0.62);
+        box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.25);
+      }
+
+      @container (max-width: 560px) {
+        .status-filters-wrap.status-filters-grid {
+          gap: 6px;
+        }
+
+        .status-filter-btn {
+          flex: 1 1 calc(50% - 6px);
+        }
+      }
+
+      @container (max-width: 400px) {
+        .status-filter-btn {
+          flex-basis: 100%;
+        }
+      }
+
       .section {
         display: flex;
         flex-direction: column;
         gap: 12px;
+      }
+
+      .section.status-filter-hidden {
+        display: none;
+      }
+
+      .status-filter-popup-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: none;
+      }
+
+      .status-filter-popup-modal.open {
+        display: block;
+      }
+
+      .status-filter-popup-backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.58);
+        backdrop-filter: blur(4px);
+      }
+
+      .status-filter-popup-dialog {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: min(1200px, calc(100% - 24px));
+        height: min(80vh, 760px);
+        background: rgba(18, 18, 30, 0.94);
+        border: 1px solid var(--card-border);
+        border-radius: 18px;
+        box-shadow: 0 18px 34px rgba(0, 0, 0, 0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        overscroll-behavior: contain;
+      }
+
+      .status-filter-popup-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 14px 16px;
+        background: rgba(255, 255, 255, 0.04);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .status-filter-popup-title {
+        font-size: 0.95rem;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+
+      .status-filter-popup-close {
+        width: 30px;
+        height: 30px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--text-secondary);
+        cursor: pointer;
+      }
+
+      .status-filter-popup-close:hover {
+        color: var(--text-primary);
+        background: rgba(255, 255, 255, 0.15);
+      }
+
+      .status-filter-popup-list {
+        flex: 1 1 auto;
+        min-height: 0;
+        max-height: calc(min(80vh, 760px) - 64px);
+        padding: 10px;
+        display: grid;
+        grid-template-columns: repeat(var(--status-popup-cols, 4), minmax(0, 1fr));
+        gap: 7px;
+        overflow-y: scroll;
+        overflow-x: hidden;
+        align-content: start;
+        touch-action: pan-y;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-gutter: stable both-edges;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(var(--accent-rgb), 0.6) rgba(255, 255, 255, 0.08);
+      }
+
+      .status-filter-popup-list::-webkit-scrollbar {
+        width: 10px;
+      }
+
+      .status-filter-popup-list::-webkit-scrollbar-track {
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 10px;
+      }
+
+      .status-filter-popup-list::-webkit-scrollbar-thumb {
+        background: rgba(var(--accent-rgb), 0.62);
+        border-radius: 10px;
+        border: 2px solid rgba(255, 255, 255, 0.08);
+      }
+
+      .status-filter-popup-list::-webkit-scrollbar-thumb:hover {
+        background: rgba(var(--accent-rgb), 0.84);
+      }
+
+      .status-filter-popup-item {
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text-primary);
+        padding: 8px 6px;
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        cursor: pointer;
+        min-height: 74px;
+      }
+
+      .status-filter-popup-item ha-icon {
+        --mdc-icon-size: 18px;
+      }
+
+      .status-filter-popup-item:hover {
+        border-color: rgba(var(--accent-rgb), 0.75);
+        background: rgba(var(--accent-rgb), 0.2);
+      }
+
+      .status-filter-popup-item.active {
+        border-color: rgba(255, 193, 79, 0.96);
+        background: linear-gradient(145deg, rgba(255, 190, 72, 0.28), rgba(255, 140, 24, 0.2));
+        box-shadow: 0 0 0 1px rgba(255, 190, 72, 0.42), 0 8px 18px rgba(255, 153, 51, 0.26), inset 0 0 18px rgba(255, 214, 125, 0.12);
+      }
+
+      .status-filter-popup-item.active ha-icon {
+        color: #ffd277;
+        filter: drop-shadow(0 0 8px rgba(255, 187, 72, 0.7));
+      }
+
+      .status-filter-popup-item.light-on-highlight {
+        border-color: rgba(255, 181, 55, 0.96);
+        background:
+          radial-gradient(circle at 50% 22%, rgba(255, 194, 80, 0.34), rgba(255, 194, 80, 0) 34%),
+          linear-gradient(140deg, rgba(56, 66, 104, 0.96), rgba(47, 58, 96, 0.94));
+        box-shadow:
+          0 0 0 1px rgba(255, 194, 80, 0.35),
+          0 10px 22px rgba(0, 0, 0, 0.34),
+          inset 0 0 30px rgba(255, 196, 92, 0.08);
+        min-height: 98px;
+        gap: 8px;
+      }
+
+      .status-filter-popup-item.light-on-highlight ha-icon {
+        --mdc-icon-size: 38px;
+        color: #ffbf4a;
+        filter: drop-shadow(0 0 12px rgba(255, 190, 74, 0.78));
+      }
+
+      .status-filter-popup-item.light-on-highlight .state {
+        display: none;
+      }
+
+      .status-filter-popup-item.light-on-highlight .name {
+        font-size: 0.9rem;
+      }
+
+      .status-filter-popup-item.unavailable {
+        opacity: 0.62;
+      }
+
+      .status-filter-popup-item .name {
+        font-size: 0.73rem;
+        font-weight: 600;
+        line-height: 1.2;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-filter-popup-item .state {
+        font-size: 0.64rem;
+        color: var(--text-secondary);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .status-filter-popup-empty {
+        color: var(--text-secondary);
+        text-align: center;
+        padding: 26px 8px;
+        font-size: 0.86rem;
       }
 
       .section-content {
@@ -2925,6 +6045,13 @@ class YangcCard extends HTMLElement {
       .section-icon-toggle:focus-visible {
         outline: 2px solid rgba(var(--accent-rgb), 0.72);
         outline-offset: 1px;
+      }
+
+      .section-icon-static {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 6px;
       }
 
       .section-icon {
@@ -5269,6 +8396,28 @@ class YangcCard extends HTMLElement {
             });
         });
 
+        this.shadowRoot.querySelectorAll('.status-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const nextFilter = String(btn.dataset.statusFilter || 'all').trim() || 'all';
+                if (this._activeStatusFilter !== nextFilter) {
+                    this._activeStatusFilter = nextFilter;
+                    this._scheduleCardUpdate();
+                }
+                const matchingEntitiesCount = this._getStatusFilterEntitiesForKey(nextFilter).length;
+                if (matchingEntitiesCount <= 0) {
+                    this._closeStatusFilterPopup();
+                    return;
+                }
+                this._openStatusFilterPopup(nextFilter);
+            });
+        });
+
+        this.shadowRoot.querySelectorAll('[data-action="close-status-filter-popup"]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                this._closeStatusFilterPopup();
+            });
+        });
+
         const cardContainer = this.shadowRoot.querySelector('.card-container');
         if (cardContainer) {
             cardContainer.addEventListener('click', event => {
@@ -5292,6 +8441,9 @@ class YangcCard extends HTMLElement {
             return;
         }
         const visibleSections = this._getVisibleSections();
+        if (this._isStatusFiltersEnabled()) {
+            this._ensureActiveStatusFilterIsVisible();
+        }
         visibleSections.forEach((section, index) => {
             if (section.type === 'toggle') {
                 this._renderLights(section, `lights-container-${index}`);
@@ -5315,6 +8467,11 @@ class YangcCard extends HTMLElement {
                 }
             }
         });
+        if (this._isStatusFiltersEnabled()) {
+            this._syncStatusFilterBar(visibleSections);
+            this._syncStatusFilterPopup();
+        }
+        this._syncSectionVisibilityForStatusFilter();
     }
 
     _getEntityDomain(entityId = '') {
@@ -5403,10 +8560,11 @@ class YangcCard extends HTMLElement {
 
     _renderLights(section = null, containerId = 'lights-container') {
         const lights = Array.isArray(section?.entities) ? section.entities : this._config.lights;
+        const visibleLights = lights.filter(light => this._shouldIncludeEntityByStatusFilter(light, 'toggle'));
         const container = this.shadowRoot.getElementById(containerId);
         if (!container) return;
 
-        container.innerHTML = lights.map(light => {
+        container.innerHTML = visibleLights.map(light => {
             const state = this._hass.states[light.entity];
             const isOn = state && (state.state === 'on');
             const icon = light.icon || 'mdi:lightbulb';
@@ -5895,12 +9053,13 @@ class YangcCard extends HTMLElement {
 
     _renderMixed(section = null, containerId = 'mixed-container') {
         const entities = Array.isArray(section?.entities) ? section.entities : [];
+        const visibleEntities = entities.filter(entityConfig => this._shouldIncludeEntityByStatusFilter(entityConfig, 'mixed'));
         const container = this.shadowRoot.getElementById(containerId);
         if (!container) return;
         const columns = this._normalizeColumns(section?.columns, this._config?.lights_columns || 3);
         container.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
 
-        container.innerHTML = entities.map(entityConfig => {
+        container.innerHTML = visibleEntities.map(entityConfig => {
             const state = this._hass.states[entityConfig.entity];
             const meta = this._getMixedEntityMeta(entityConfig);
             const domain = this._getEntityDomain(entityConfig.entity);
@@ -5935,11 +9094,12 @@ class YangcCard extends HTMLElement {
 
     _renderCurtains(section = null, containerId = 'curtains-container') {
         const curtains = Array.isArray(section?.entities) ? section.entities : this._config.curtains;
+        const visibleCurtains = curtains.filter(curtain => this._shouldIncludeEntityByStatusFilter(curtain, 'cover'));
         const container = this.shadowRoot.getElementById(containerId);
         if (!container) return;
         const controlMode = section?.control_mode === 'buttons' ? 'buttons' : 'slider';
 
-        container.innerHTML = curtains.map(curtain => {
+        container.innerHTML = visibleCurtains.map(curtain => {
             const state = this._hass.states[curtain.entity];
             const isReversed = curtain.reversed === true;
             const { stateClass, position } = this._getCurtainVisualState(state, isReversed);
@@ -8602,6 +11762,39 @@ class YangcCard extends HTMLElement {
         const { r, g, b } = this._hexToRgb(normalized);
         const darker = this._darkenHex(normalized, 0.25);
         return `--accent-color: ${normalized}; --accent-rgb: ${r}, ${g}, ${b}; --accent-glow: rgba(${r}, ${g}, ${b}, 0.4); --accent-gradient: linear-gradient(135deg, ${normalized} 0%, ${darker} 100%);`;
+    }
+
+    _normalizeOpacity(value, fallback = 0.85) {
+        const fallbackNumber = Number.isFinite(Number(fallback))
+            ? Number(fallback)
+            : 0.85;
+        let numeric = Number(value);
+
+        if (!Number.isFinite(numeric)) {
+            const raw = String(value ?? '').trim();
+            if (raw.endsWith('%')) {
+                numeric = Number(raw.slice(0, -1).trim());
+            }
+        }
+
+        if (!Number.isFinite(numeric)) {
+            numeric = fallbackNumber;
+        }
+
+        if (numeric > 1) {
+            numeric = numeric / 100;
+        }
+
+        if (numeric < 0) return 0;
+        if (numeric > 1) return 1;
+        return Math.round(numeric * 100) / 100;
+    }
+
+    _normalizeHeaderStyle(value, fallback = 'solid') {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (normalized === 'gradient') return 'gradient';
+        if (normalized === 'solid') return 'solid';
+        return fallback;
     }
 
     _normalizeColumns(value, fallback = 3) {

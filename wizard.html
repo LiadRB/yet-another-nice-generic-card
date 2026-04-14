@@ -2336,6 +2336,7 @@
                     icon: section?.icon || sectionDefaults.icon,
                     type: normalizedType,
                     visible: section?.visible !== false,
+                    collapsible: section?.collapsible !== false,
                     entities: Array.isArray(section?.entities) ? section.entities : []
                 };
                 if (normalizedType === 'cover') {
@@ -3131,7 +3132,7 @@
                     const sectionColumns = (s.type === 'toggle' || s.type === 'mixed')
                         ? sanitizeLightsColumns(s.columns ?? config.lights_columns ?? 3)
                         : 3;
-                    addSection(s.id, s.title, s.icon, s.type, sectionColumns, s.visible !== false);
+                    addSection(s.id, s.title, s.icon, s.type, sectionColumns, s.visible !== false, {}, s.collapsible !== false);
                     const sectionEl = document.getElementById('sectionsContainer').lastElementChild;
                     if (s.type === 'cover' && s.control_mode) {
                         sectionEl.querySelector('.section-control-mode').value = s.control_mode;
@@ -3416,7 +3417,7 @@
         }
 
         // Section Management
-        function addSection(id = '', title = '', icon = '', type = 'toggle', columns = 3, visible = true, options = {}) {
+        function addSection(id = '', title = '', icon = '', type = 'toggle', columns = 3, visible = true, options = {}, collapsible = true) {
             const container = document.getElementById('sectionsContainer');
             setupSectionListDrag(container);
             const sectionId = id || `section_${Date.now()}`;
@@ -3451,6 +3452,13 @@
                             </button>
                         </div>
                         <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">בטל סימון כדי להסתיר את הסקשן הזה מהתצוגה המקדימה ומה־YAML</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" style="display: flex; align-items: center; gap: 8px; margin-bottom: 0;">
+                            <input type="checkbox" class="section-collapsible" ${collapsible ? 'checked' : ''} style="accent-color: var(--accent);">
+                            אפשר קיפול סקשן
+                        </label>
+                        <span style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">כאשר מופעל, לחיצה על האייקון תקפל/תפתח את הסקשן</span>
                     </div>
                     <div class="form-group">
                         <label class="form-label">כותרת</label>
@@ -4543,6 +4551,7 @@
                         ),
                         type,
                         visible: parseYamlBoolean(section?.visible, true),
+                        collapsible: parseYamlBoolean(section?.collapsible, true),
                         entities: []
                     };
 
@@ -4908,7 +4917,7 @@
                         inSectionEntities = false;
 
                         const sectionPair = parseYamlPair(trimmed.slice(2).trim());
-                        if (sectionPair && ['id', 'type', 'title', 'icon', 'visible', 'columns', 'control_mode'].includes(sectionPair.key)) {
+                        if (sectionPair && ['id', 'type', 'title', 'icon', 'visible', 'collapsible', 'columns', 'control_mode'].includes(sectionPair.key)) {
                             currentSection[sectionPair.key] = sectionPair.value;
                         }
                         return;
@@ -4926,7 +4935,7 @@
                         inSectionEntities = false;
                         currentSectionEntity = null;
                         const sectionPair = parseYamlPair(trimmed);
-                        if (sectionPair && ['id', 'type', 'title', 'icon', 'visible', 'columns', 'control_mode'].includes(sectionPair.key)) {
+                        if (sectionPair && ['id', 'type', 'title', 'icon', 'visible', 'collapsible', 'columns', 'control_mode'].includes(sectionPair.key)) {
                             currentSection[sectionPair.key] = sectionPair.value;
                         }
                         return;
@@ -5088,6 +5097,7 @@
                     icon: sectionEl.querySelector('.section-icon').value,
                     type: sectionEl.querySelector('.section-type').value,
                     visible: sectionEl.querySelector('.section-visible')?.checked !== false,
+                    collapsible: sectionEl.querySelector('.section-collapsible')?.checked !== false,
                     entities: []
                 };
                 if (section.type === 'cover') section.control_mode = sectionEl.querySelector('.section-control-mode').value;
@@ -5694,6 +5704,7 @@
                 icon: normalizedSection.icon || getDefaultSectionIcon(sectionType),
                 type: sectionType,
                 visible: normalizedSection.visible !== false,
+                collapsible: normalizedSection.collapsible !== false,
                 entities: (Array.isArray(normalizedSection.entities) ? normalizedSection.entities : [])
                     .map(entity => buildSerializableEntity(entity, sectionType))
             };
